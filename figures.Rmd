@@ -37,11 +37,6 @@ knitr::opts_chunk$set(echo = TRUE)
 # Packages
 
 ```{r include = FALSE}
-packages <- c("tidyverse", "raster",
-               "gdalUtils", "scico", "tmap",
-               "tmaptools", "sf", "terra",
-               "here","easypackages")
-
 packages <- c("tidyverse", "raster","gdalUtils", "scico","tmap", "tmaptools",
               "sf", "terra", ,"here", "rmapshaper",
               "data.table", "broom", "Rfast", "matrixStats",
