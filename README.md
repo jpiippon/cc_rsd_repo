@@ -23,7 +23,7 @@ The files should be used in following order:
 11) areas_for_fig_classes.Rmd
 
 For country polygons we used 10m data from Natural Earth. See https://www.naturalearthdata.com/
-
+and regional macroregion polygons adapted from Kummu et al. (2010). 
 
 References:
 
@@ -32,6 +32,8 @@ Abatzoglou, J. T., Dobrowski, S. Z., Parks, S. A., & Hegewisch, K. C. (2018). Te
 Amatulli, G., McInerney, D., Sethi, T., Strobl, P., & Domisch, S. (2020). Geomorpho90m, empirical evaluation and accuracy assessment of global high-resolution geomorphometric layers. Scientific Data, 7(1), 162. https://doi.org/10.1038/s41597-020-0479-6
 
 Gilbert, M., Nicolas, G., Cinardi, G., Van Boeckel, T. P., Vanwambeke, S. O., Wint, G. R. W., & Robinson, T. P. (2018). Global distribution data for cattle, buffaloes, horses, sheep, goats, pigs, chickens and ducks in 2010. Scientific Data, 5, 180227. https://doi.org/10.1038/sdata.2018.227
+
+Kummu, M., Ward, P. J., Moel, H. de, & Varis, O. (2010). Is physical water scarcity a new phenomenon? Global assessment of water shortage over the last two millennia. Environmental Research Letters, 5(3), 034006. https://doi.org/10.1088/1748-9326/5/3/034006
 
 Robinson, T. P., & Food and Agriculture Organization of the United Nations (Eds.). (2011). Global livestock production systems. Food and Agriculture Organization of the United Nations.
 
