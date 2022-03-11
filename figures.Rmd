@@ -267,15 +267,14 @@ Aggregate and resample mcd 01 data into 5arcmin. This express a fraction of gras
 
 ```{r}
 
-# !!! uncomment these lines
-# mcd <- here("Data", "Output", "mcd_mode_0_or_1_res000449.tif") %>%
-#   rast()
-# 
-# mcd_01_5arcmin <- crop(mcd, cc_med) %>%
-#   aggregate(., fact = 18, na.rm = T) %>%
-#   resample(., cc_med,
-#            filename = here("Data", "Output", "mcd_fraction_of_grassland_in_cell_5arcmin.tif"), 
-#            overwrite = T)
+mcd <- here("Data", "Output", "mcd_mode_0_or_1_res000449.tif") %>%
+  rast()
+
+mcd_01_5arcmin <- crop(mcd, cc_med) %>%
+  aggregate(., fact = 18, na.rm = T) %>%
+  resample(., cc_med,
+           filename = here("Data", "Output", "mcd_fraction_of_grassland_in_cell_5arcmin.tif"),
+           overwrite = T)
 
 
 # get the data
@@ -309,6 +308,10 @@ qtm(cc_trend$estimate)
 
 
 ## Regions and extract
+For macroregion data, see: 
+
+Kummu, M., Ward, P. J., Moel, H. de, & Varis, O. (2010). Is physical water scarcity a new phenomenon? Global assessment of water shortage over the last two millennia. Environmental Research Letters, 5(3), 034006. https://doi.org/10.1088/1748-9326/5/3/034006
+
 
 ```{r}
 # region data
@@ -601,8 +604,8 @@ cc_reg_long <- cc_regional %>%
 
 p_cc_reg
 
-#ggsave(filename = here("Figures", "Figure3a.pdf"),
- #               plot = p_cc_reg)
+ggsave(filename = here("Figures", "Figure3a.pdf"),
+              plot = p_cc_reg)
 
 ```
 
