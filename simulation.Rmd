@@ -1,0 +1,562 @@
+---
+title: "Assess for the uncertanties"
+author: "Gabriel Cramer/ Johannes Piipponen"
+date: "14/12/2021"
+output: html_document
+---
+
+
+# Introduction
+We account for the uncertainties in this document. Moreover, we do some sensitivity analysis to see how different parameters contribute to the uncertainty.
+
+Related to the article "Global trends in grassland carrying capacity and relative stocking density of livestock"
+
+The files needed in the analysis should be used in following order:
+1) creating_TreeCoverMultiplier.Rmd
+2) GEE_codes.txt
+3) rast_processing_res000449.Rmd
+4) simulation.Rmd
+5) cc_trend_with_linear_regression.Rmd
+6) figures.Rmd
+7) extract_countries.Rmd
+8) gather_isimip_data.Rmd
+9) simulate_isimip_agb.Rmd
+10) gather_glw_aw_for_figure_S4.Rmd
+11) areas_for_fig_classes.Rmd
+
+# Read in data
+We'll also load some packages. This is not strictly speaking necessary as long as they are installed, because function namespace is referred to unless the function is one I have built in the chunks below. 
+
+
+```{r setup, echo = FALSE}
+
+packages <-  c("tidyverse", "truncnorm", "matrixStats", "tictoc", "here", "data.table", "parallel", "sp", "terra", "scico", "beepr", "gdalUtils", "collapse")
+lapply(packages, require, character.only = TRUE) 
+
+# read dt where animal numbers have been calculated with dasymetric method. This data created in the file
+# rast_processing_res000449.Rmd 
+dt <- fread(here("Data","Output", "data_for_simulations.csv"))
+
+# If you want to do simulation based on areal_weighted GLW product, try this (created in glw_aw.Rmd file)
+ # however, this is only needed for Figure S4 in the Appendix
+# dt <- fread(here("Data","Supplementary", "data_for_simulations_aw_animals.csv"))
+
+
+pal_cv <- scico(n = 6, palette = "nuuk", direction = -1)
+
+```
+
+# Building the simulation through functions. 
+
+This approach breaks the simulation down into smaller chunks. It also allows the user to read how the simulation is built and see how the functions build on each other - helpful for transparency. It would be neater to source these functions from a separate .R file, but in order to see how the simulation is built all in one markdown, they are presented here. Simulating starts on line [INSERT LINE!]. Don't forget to to run the functions to use them in the simulation. 
+
+## Helper functions for building matrices
+
+```{r rep functions}
+
+rep_col <- function(column, n) {
+  matrix(rep(column, each = n), ncol = n, byrow = TRUE)
+}
+
+rep_row <- function(vec, n) {
+  matrix(rep(vec, each = n), nrow = n)
+}
+
+```
+
+## Simulate aboveground biomass (AB) function
+
+ab = simnpp_biom * simfANPP * simtreecov * slope
+! Note that we multiply with 100:
+simnpp_biom <- simnpp_biom * 100
+This is because MODIS webpage notifies original scaling factor of NPP to be 0.0001 and therefore final results should be divided by 10 000. The unit of NPP is originally kg*C /m2. However, as we convert NPP to square kilograms, this simplifies to
+(NPP / 10000 )  * 1e6  = NPP * 100 (unit is npp kg carbon per km2 )
+
+We use abbreviation AB instead on AGB here
+
+```{r sim_ab repeated distribution}
+
+
+sim_ab <- function(d, n, var_rnorm_npp_dist, carbcf_dist, var_rnorm_temp_dist) {
+  
+  n2 <- nrow(d)
+
+  simnpp_biom <- rep_col(d[, "npp"], n)
+  simnpp_biom <- collapse::TRA(simnpp_biom, var_rnorm_npp_dist, "*")
+  simnpp_biom <- simnpp_biom * 100
+  simnpp_biom <- collapse::TRA(simnpp_biom, carbcf_dist, "/")
+  
+  avgtemp_mat <- rep_col(d[, "avgtemp"], n)
+  simfANPP <- collapse::TRA(avgtemp_mat, var_rnorm_temp_dist, "*")
+
+  simtreecov <- apply(d, 1, function(x) {rtruncnorm(n, a = x["tc_bot"], b = x["tc_up"], mean = x["tc_med"])})
+  simtreecov <- t(simtreecov) # apply binds results as columns so we should transpose to match format with other inputs.
+  simtreecov[is.na(simtreecov)] <- 1
+  
+  # terrain slope  
+  slope <- rep_col(d[, "slope"], n)
+  
+  # compute above ground biomass
+  ab <- simnpp_biom * simfANPP * simtreecov * slope
+  ab[ab < 0.1] <- NA
+  
+  return(ab)
+  
+}
+
+```
+
+## Simulate CC function
+
+cc = ab / intake_forage
+
+intake forage is a defined as a constant - the median values of a truncated normal distribution multiplied to ensure correct units
+
+```{r simulate CC}
+
+sim_cc <- function(ab, intake_forage) {
+
+  cc <- ab / intake_forage
+
+  return(cc)
+  
+}
+
+```
+
+
+## Simulate RSD function
+
+animal_units_per_km2 = animal_units / pix_area_km2
+rsd = animal_units_per_km2 / carrying capacity (cc)
+
+we have to simulate animal units from the input data (subset a)
+
+
+```{r sim rsd single draw animal dist}
+
+sim_au <- function(animals, n, ctrd, btrd, strd, gtrd, htrd) {
+  
+  n2 <- nrow(animals)
+  
+  cattle <- rep_col(animals[, "cattle"], n)
+  cattle <- collapse::TRA(cattle, ctrd, "*")
+  
+  buffalo <- rep_col(animals[, "buffalo"], n)
+  buffalo <- collapse::TRA(buffalo, btrd, "*")
+  
+  sheep <- rep_col(animals[, "sheep"], n)
+  sheep <- collapse::TRA(sheep, strd, "*")
+  
+  goat <- rep_col(animals[, "goat"], n)
+  goat <- collapse::TRA(goat, gtrd, "*")
+
+  horse <- rep_col(animals[, "horse"], n)
+  horse <- collapse::TRA(horse, htrd, "*")
+  
+  au <- cattle + buffalo + sheep + goat + horse
+
+  return(au)
+  
+}
+
+sim_au_pkm2 <- function(animals, au, n) {
+  
+  pix <- rep_col(animals[, "pix_area_km2"], n)
+  
+  au_pkm2 <- au / pix
+  au_pkm2[is.nan(au_pkm2)] <- NA
+  au_pkm2[is.infinite(au_pkm2)] <- NA
+  
+  return(au_pkm2)
+  
+}
+
+sim_rsd <- function(au_pkm2, cc, n) {
+  
+  #cc_med <- matrixStats::rowMedians(cc)
+  #cc_med <- rep_col(cc_med, n)
+  
+  rsd <- au_pkm2 / cc
+  rsd[is.nan(rsd)] <- NA
+  rsd[is.infinite(rsd)] <- NA
+  
+  return(rsd)
+  
+}
+
+
+```
+
+
+## Calc Median and coefficient of variation
+
+output = vectors with rowwise results, na.rm = T
+
+``` {r calculate simulation median and CV values}
+
+calc_sim_median <- function(mat) {
+  
+  m <- matrixStats::rowMedians(mat)
+  m[is.nan(m)] <- NA
+  m[is.infinite(m)] <- NA
+  
+  return(m)
+  
+}
+
+
+calc_sim_cv <- function(mat) {
+  
+  s_dev <- matrixStats::rowSds(mat, na.rm = T)
+  m_ean <- matrixStats::rowMeans2(mat, na.rm = T)
+  
+  cv <- s_dev / m_ean
+  
+  cv[is.nan(cv)] <- NA
+  cv[is.infinite(cv)] <- NA
+  
+  return(cv)
+  
+}
+
+```
+
+## simulate wrapper function
+ 
+```{r simulate wrapper function}
+
+simulate_wrapper <- function(df, year, n, var_rnorm_npp_dist, carbcf_dist, var_rnorm_temp_dist, ctrd, btrd, strd, gtrd, htrd) {
+  
+  year <- as.character(year)
+  
+  d <- df %>% dplyr::select(contains(year), slope) %>% as.matrix(.) # npp, temp, treecover, slope
+  colnames(d) <- c("npp", "avgtemp", "tc_bot", "tc_med", "tc_up", "slope")
+  
+  AB <- sim_ab(d, n, var_rnorm_npp_dist, carbcf_dist, var_rnorm_temp_dist); cat(".")
+  CC <- sim_cc(AB, intake_forage); cat(".")
+  
+  ab_med <- calc_sim_median(AB)
+  ab_cv <- calc_sim_cv(AB)
+  cat(".")
+
+  cc_med <- calc_sim_median(CC)
+  cc_cv <- calc_sim_cv(CC)
+  cat(".")
+  
+  a <- df %>% dplyr::select(cattle, sheep, buffalo, horse, goat, pix_area_km2) %>% as.matrix(.)
+    
+  au <- sim_au(a, n, ctrd, btrd, strd, gtrd, htrd); cat(".")
+  au_pkm2 <- sim_au_pkm2(a, au, n)
+  RSD <- sim_rsd(au_pkm2, CC, n); cat(".")
+    
+  rsd_med <- calc_sim_median(RSD)
+  rsd_cv <- calc_sim_cv(RSD)
+  cat(".")
+  
+  if (year == "2010") {
+    
+    au_med <- calc_sim_median(au)
+    au_cv <- calc_sim_cv(au)
+    cat(".")
+  
+    au_pkm2_med <- calc_sim_median(au_pkm2)
+    au_pkm2_cv <- calc_sim_median(au_pkm2)
+    cat(".")
+    
+    
+    } else {
+
+      t <- nrow(d)
+      
+      au_med <- rep(0, t)
+      au_cv <- rep(0, t)
+      cat(".")
+  
+      au_pkm2_med <- rep(0, t)
+      au_pkm2_cv <- rep(0, t)
+      
+    }
+    
+    results <- cbind(ab_med, ab_cv, cc_med, cc_cv, rsd_med, rsd_cv, au_pkm2_med) # removed au_med, au_cv, au_pkm2_cv
+    colnames(results) <- sapply(colnames(results), function(x) {stringr::str_c(x, "_", year)})
+  return(results)
+  
+}
+
+```
+
+## sim for each year in each chunk
+
+```{r apply simulation functions to each year}
+
+chunk_sim <- function(df, n, var_rnorm_npp_dist, carbcf_dist, var_rnorm_temp_dist, ctrd, btrd, strd, gtrd, htrd) {
+  
+  cat("\n")
+  
+  xy <- df %>% dplyr::select(x, y) # coords
+  
+  year_list <- 2001:2015
+  results <- list()
+  
+  for (year in year_list) {
+    cat("|")
+    y <- as.character(year)
+    
+    results[[y]] <- simulate_wrapper(df, year, n, var_rnorm_npp_dist, carbcf_dist, var_rnorm_temp_dist, ctrd, btrd, strd, gtrd, htrd)
+    
+    
+  }
+  
+  output <- do.call(cbind, results) %>% as.data.frame(.)
+  output <- cbind(xy, output)
+  #beepr::beep(1)
+  
+  return(output)
+  
+}
+
+
+```
+
+
+## Sensitivity Analysis functions
+Desired ouputs. CV for:
+1) npp
+2) npp * temp
+3) npp * temp * treecover
+4) npp * temp * treecover * animals
+
+```{r sensitivity analysis}
+
+sensitivity_analysis <- function(df, year, n, var_rnorm_npp_dist, var_rnorm_temp_dist, ctrd, btrd, strd, gtrd, htrd) {
+  
+  # for comments, see comments in sim_ab, sim_au_pkm2, sim_rsd, calc_sim_cv
+  
+  year <- as.character(year)
+  xy <- df %>% dplyr::select(x, y) %>% as.matrix(.)
+  
+  
+  d <- df %>% dplyr::select(contains(year)) %>% as.matrix(.) # npp, temp, treecover, slope
+  colnames(d) <- c("npp", "avgtemp", "tc_bot", "tc_med", "tc_up")
+  cat("\n.")
+  
+  animals <- df %>% dplyr::select(cattle, sheep, buffalo, horse, goat, pix_area_km2) %>% as.matrix(.)
+  cat(".")
+  
+  
+  npp <- rep_col(d[, "npp"], n)
+  npp <- collapse::TRA(npp, var_rnorm_npp_dist, "*")
+  npp <- npp * 100
+  cat(".")
+
+  temp <- rep_col(d[, "avgtemp"], n)
+  temp <- collapse::TRA(temp, var_rnorm_temp_dist, "*")
+  cat(".")
+
+  treecov <- apply(d, 1, function(x) {rtruncnorm(n, a = x["tc_bot"], b = x["tc_up"], mean = x["tc_med"])})
+  treecov <- t(treecov) 
+  treecov[is.na(treecov)] <- 1
+  cat(".")
+  
+  cattle <- rep_col(animals[, "cattle"], n)
+  cattle <- collapse::TRA(cattle, ctrd, "*")
+  cat(".")
+  
+  buffalo <- rep_col(animals[, "buffalo"], n)
+  buffalo <- collapse::TRA(buffalo, btrd, "*")
+  cat(".")
+  
+  sheep <- rep_col(animals[, "sheep"], n)
+  sheep <- collapse::TRA(sheep, strd, "*")
+  cat(".")
+  
+  goat <- rep_col(animals[, "goat"], n)
+  goat <- collapse::TRA(goat, gtrd, "*")
+  cat(".")
+
+  horse <- rep_col(animals[, "horse"], n)
+  horse <- collapse::TRA(horse, htrd, "*")
+  cat(".")
+  
+  pix <- rep_col(animals[, "pix_area_km2"], n)
+  
+  au <- cattle + buffalo + sheep + goat + horse
+  au <- au / pix
+  cat(".")
+  
+  # combinations
+  
+  npp_temp <- npp * temp; cat(".")
+  npp_temp_tc <- npp * temp * treecov; cat(".")
+  npp_temp_tc_au <- npp * temp * treecov * au; cat(".")
+  
+  # cv
+  npp_cv <- calc_sim_cv(npp); cat(".")
+  npp_temp_cv <- calc_sim_cv(npp_temp); cat(".")
+  npp_temp_tc_cv <- calc_sim_cv(npp_temp_tc); cat(".")
+  npp_temp_tc_au_cv <- calc_sim_cv(npp_temp_tc_au); cat(".")
+  
+  sense_out <- cbind(npp_cv, npp_temp_cv, npp_temp_tc_cv, npp_temp_tc_au_cv)
+  colnames(sense_out) <- sapply(colnames(sense_out), function(x) {stringr::str_c(x, "_", year)})
+  sense_out <- cbind(xy, sense_out)
+  
+  return(sense_out)
+  
+
+}
+
+```
+
+
+# The Simulaiton and Sensitivity Analysis
+
+## General inputs
+
+These variables are inputs, but they need to be the same in each segement. Unless we decide later that each cell should have a fresh random draw for the simulations. But as it stands, these distributions will be used for each cell. The point is to avoid a separate random draw for each chunk of the dataset when we run the full sim. so the randow draws should be the same for all cells, or fresh for each cell. 
+
+```{r set up some useful variables}
+
+n <- 1000 # will be 1000 eventually for full results
+c <- 1 # the mean value of the var_rnorm_npp simulations
+sd1 <-  0.07 # for npp
+sd2 <- 0.198 * 0.71
+
+# distributions for AB sims
+var_rnorm_npp_dist <- rnorm(n, mean = c, sd = sd1)
+carbcf_dist <- rtruncnorm(n, a=0.47, b=0.50)
+var_rnorm_temp_dist <- rnorm(n, mean = c, sd = sd2)
+
+# distributions for animals in RSD sims
+ctrd <- rtruncnorm(n, a = 0.50, b = 1.25, mean = 1.0) # cattle
+btrd <- rtruncnorm(n, a = 0.60, b = 0.70) # buffalo
+strd <- rtruncnorm(n, a = 0.10, b = 0.15) # sheep
+gtrd <- rtruncnorm(n, a = 0.10, b = 0.15) # goats
+htrd <- rtruncnorm(n, a = 0.40, b = 1.80) # horses
+
+# intake forage scalar
+intake_forage <- median(rtruncnorm(n, a=0.018, b=0.040, mean = 0.020)) * 365 * 455
+
+```
+
+## Prepare the input dataset
+
+```{r subset}
+
+# identify cold area cells - negative fANPP cells
+cold_areas <- dt %>%
+  dplyr::mutate(idx = row_number()) %>%
+  # dplyr::filter(across(avgtemp_2001:avgtemp_2015, ~ .x <= -0.171/0.0129)) %>%
+  dplyr::filter(across(avgtemp_2001:avgtemp_2015, ~ .x <= -10)) %>%
+  dplyr::select(idx) %>%
+  dplyr::pull()
+
+# adjust temperature values (here we allocated fraction of NPP to aboveground biomass)
+df <- dt %>% 
+  dplyr::mutate(across(avgtemp_2001:avgtemp_2015, ~  (0.171 + 0.0129 * .x))) %>% 
+  as.data.frame(.)
+
+# if subsetting, adjust the values for x and y and run this nugget:
+# df <- df %>%
+#   dplyr::filter(x >= -78.4 & x <= -47.1) %>%
+#   dplyr::filter(y >= -55.8 & y <= -20.6)
+
+rm(dt)
+
+```
+
+# split the dataset
+
+We can't run the simulation all at once because each piece would add up quickly to overwhelm the RAM. So we split the dataset into chunks of 10,000 rows and this is stored in a list. That's why we have the ```chunk_sim()``` function, so apply the year loop to each chunk in the list.
+
+```{r split df into chunks}
+# 10k and 10k might work better?
+# f <- rep(seq_len(ceiling(nrow(df)/10000)), each = 10000, length.out = nrow(df)) # creates splitting index
+f <- rep(seq_len(ceiling(nrow(df)/50000)), each = 50000, length.out = nrow(df))
+df_list <- split(df, f = f) # splits data into managable chuncks and stores in a list
+
+rm(df)
+
+```
+
+
+
+## Run the simulation!
+
+```{r RUN THE SIM}
+
+tic()
+results_list <- lapply(df_list, chunk_sim, n, var_rnorm_npp_dist, carbcf_dist, var_rnorm_temp_dist, ctrd, btrd, strd, gtrd, htrd)
+toc() 
+#beepr::beep(8)
+
+out <- do.call(rbind, results_list)
+out[cold_areas, 3:ncol(out)] <- NA # only run for full dataset
+
+
+fwrite(out, here("Data","Output", "simulation_results_n1000.csv"))
+
+cat("\n\n Summary of AB Median 2010: \n"); summary(out$ab_med_2010)
+cat("\n\n Summary of CC Median 2010: \n"); summary(out$cc_med_2010)
+cat("\n\n Summary of RSD Median 2010: \n"); summary(out$rsd_med_2010)
+
+cat("\n\n Summary of AB CV 2010: \n"); summary(out$ab_cv_2010)
+cat("\n\n Summary of CC CV 2010: \n"); summary(out$cc_cv_2010)
+cat("\n\n Summary of RSD CV 2010: \n"); summary(out$rsd_cv_2010)
+```
+
+
+
+## Sensitivity Analysis -- done for Da animal products only
+
+this is simpler that the simulation, and doesn't have as many wrappers. the sim has the wrapper and the chunk functions which can be thought of as enabling a loop within a loop. for each chunk, for each year. 
+
+For the sensitivity analysis, as it currently stands, the function can be applied to chunks, but the year must be selected, as in the chunk code chunk below. 
+
+I recommend picking a year, and running for the whole world for a year. If you need more years, then do the same for that year. Or it would be possible to tweak so it can be run in a similar fashion to the simulation - for each chunk for each year, if you want all the years. 
+
+```{r RUN SENSITIVITY ANALYSIS}
+
+tic()
+sense_list <- lapply(df_list, sensitivity_analysis, 2010, n, var_rnorm_npp_dist, var_rnorm_temp_dist, ctrd, btrd, strd, gtrd, htrd)
+
+cat("\n"); toc()#; beepr::beep(1)
+
+sense <- do.call(rbind, sense_list)
+cat("\n Summary of sensitivity analysis results: \n\n"); summary(sense[, 3:ncol(sense)])
+
+fwrite(sense, here("Data","Output", "sensitivity_results_2010_n1000_260122.csv"))
+```
+
+# Test results
+
+```{r test med and cv}
+
+# just change the input to this this function to get for sense then run the chunk.
+test <- as.matrix(out)
+
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+pal_cv <-  scico::scico(n = 6, palette = "nuuk", direction = -1)
+
+
+r_list <- list()
+nms <- colnames(test)[3:length(colnames(test))]
+
+for (i in 1:(length(colnames(test))-2)) {
+  m <- test[, c(1, 2, i+2)]
+  r_list[[i]] <- raster::rasterFromXYZ(m, crs = epsg4326)
+  cat(".")
+}
+
+names(r_list) <- nms
+
+# change pattern argument in grepl() for different plots
+for (name in names(r_list)) {
+  if (grepl("rsd_med_2010", name) == T) {
+    raster::plot(r_list[[name]], main = name, col = pal_cv)
+  }
+
+}
+
+```
+

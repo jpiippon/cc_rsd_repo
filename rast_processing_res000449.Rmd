@@ -1,0 +1,957 @@
+---
+title: "Raster processing with high resolution"
+author: "Johannes Piipponen"
+date: "Jan 2022"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Description of the document
+
+This document contains the codes and modifies the data for the article "Global trends in grassland carrying capacity and relative stocking density of livestock". Some of the calculations will take many hours. The input data distributed should be saved to path Data/Input 
+
+The commented lines are not used to create the output for the article, but they might be useful otherwise. Feel free to provide feedback or suggest improvements for the code! I admit it is bit messy after all the changes.
+
+We used terra:: version 1.4.22 in the analysis. Some functions might have changed
+
+The files needed in the analysis should be used in following order:
+1) creating_TreeCoverMultiplier.Rmd
+2) GEE_codes.txt
+3) rast_processing_res000449.Rmd
+4) simulation.Rmd
+5) cc_trend_with_linear_regression.Rmd
+6) figures.Rmd
+7) extract_countries.Rmd
+8) gather_isimip_data.Rmd
+9) simulate_isimip_agb.Rmd
+10) gather_glw_aw_for_figure_S4.Rmd
+11) areas_for_fig_classes.Rmd
+
+
+# Load packages
+
+*Install packages, options etc*
+```{r include=FALSE}
+packages <- c("tidyverse", "raster","gdalUtils", "scico",
+              "sf", "terra", "data.table","here", "tictoc",
+              "easypackages")
+
+not_installed <- packages[!(packages %in% installed.packages()[,"Package"])]
+if(length(not_installed)){install.packages(not_installed)}
+
+library(easypackages) # loads all the libraries
+libraries(packages)
+
+# or
+# library(tidyverse); library(raster); library(gdalUtils); library(scico);
+# library(sf); library(terra); library(data.table); library(here); library(tictoc)
+
+# Create valid PROJ4 string for EPSG 4326
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #added datumn
+
+# extents for templaterasters
+e <- extent(-180,180,-90,90) 
+
+#timestep used in the analysis
+timestep <- 2001:2015
+
+# options, mainly for terra package
+terraOptions(tempdir= here("Temp_R"))
+terraOptions()
+rasterOptions(tmpdir= here("Temp_R"))
+rasterOptions()
+
+# 
+wopt_options <- list(gdal = c("BIGTIFF=YES", # maybe not needed with the newest terra versions
+                "PREDICTOR = 2",
+                "NUM_THREADS = ALL_CPUS"))
+
+
+```
+
+
+
+# MCD Land Cover Class 
+
+We first calculated mode value of MODIS land cover classes (MCD) between 2001 and 2015 in Google Earth Engine (GEE). Then we reclassified the data so that classes savannas, woody savannas and grasslands get value 1 and all other areas value 0. The GEE code used is provided in separate file.
+
+Here we collect the MCD files we got from GEE and then merge them. 
+MODIS MCD12Q1v006 data downloaded from:
+https://developers.google.com/earth-engine/datasets/catalog/MODIS_006_MCD12Q1
+
+Ref: 
+Sulla-Menashe, D., & Friedl, M. A. (2018). User guide to collection 6 MODIS land cover (MCD12Q1 and MCD12C1) product. USGS: Reston, VA, USA, 1–18. https://doi.org/10.5067/MODIS/MCD12Q1.006
+
+
+
+*mcd land cover class - this determines the study area*
+```{r}
+rastlist_gee_mcd <- list.files(path = here("Data", "Input") ,
+                           pattern="MCD_mode2001_2015", full.names=TRUE)
+
+
+# empty template raster we will fill soon 
+# Merging the files is based on raster-package mosaic_raster function. terra::merge with do call might be a good alternative
+writeRaster(raster(ext = e, crs = epsg4326),
+            filename = here("Data", "Processed_input", "mosaic_MCD_mode_2001_2015.tif"), ,
+            format="GTiff", overwrite=TRUE )
+
+# this fills the file created above
+mosaic_rasters(gdalfile = rastlist_gee_mcd,
+                 dst_dataset = here("Data", "Processed_input", "mosaic_MCD_mode_2001_2015.tif"),
+                 of = "GTiff")
+
+
+# # get the merged tif created above
+mymergedfiles_mcd <-
+  list.files(path = here("Data", "Processed_input"),
+                            pattern="mosaic_MCD",
+                            full.names=TRUE)
+mymergedfiles_mcd
+mcd <- rast(mymergedfiles_mcd)
+mcd %>% plot()
+
+# save this 0 1 0 1 data. This is needed for later aggregation when we evaluate how large fraction of 5arcmin cell is actually grassland
+names(mcd) <- "mcd"
+writeRaster(mcd, filename = here("Data", "Output", "mcd_mode_0_or_1_res000449.tif"), datatype = "INT1U",
+            names = c("mcd"), overwrite = TRUE)
+
+# no needed for the article but might be useful
+# # change zero values of mcd data into NA. 
+# mcd0na <- classify(mcd, cbind(0, NA),
+#               filename = here("Data", "Output", "GCB_mcd_mode_1_or_NA.tif"), 
+#               overwrite = TRUE,
+#               names = c("mcd"), 
+#               datatype = "INT1U", 
+#               wopt = wopt_options)
+# 
+# mcd0na %>% plot()
+# 
+# 
+# 
+# ################################### get the final file
+mcd <- here("Data", "Output", "mcd_mode_0_or_1_res000449.tif") %>% 
+  rast()
+mcd %>% plot()
+################################### get the final file
+
+```
+
+
+# Net Primary Productivity (NPP)
+Also from GEE. Merge files downloaded via GEE.
+
+The unit of NPP is originally kg * C /m2 but the MODIS webpage notifies original scaling factor of NPP to be 0.0001 and therefore results should be divided by 10 000 to get the unit kg * C /m2. 
+
+MODIS NPP data MOD17A3HGF.006 downloaded from: https://developers.google.com/earth-engine/datasets/catalog/MODIS_006_MOD17A3HGF?hl=en#bands
+
+Ref: 
+Running, S. W., & Zhao, M. (2019). MOD17A3HGF MODIS/Terra Net Primary Production Gap-Filled Yearly L4 Global 500 m SIN Grid V006. 2019, distributed by NASA EOSDIS Land Processes DAAC. 35. https://doi.org/10.5067/MODIS/MOD17A3HGF.006
+
+
+Note that we also addressed uncertainties related to this parameter in the file simulation.Rmd. See sections 2.4 and 3.4 in the main text.
+
+
+
+*NPP*
+```{r}
+# function that get rasterlist for different years
+rastlist_npp_year <- function(year) {
+  list.files(path = here("Data", "Input"),
+             pattern= paste0("NPP", year), 
+             full.names = TRUE) }
+
+rastlist_npp_year("2001") #check 
+
+
+#### terra-based SpatRasterCollection solution for merging 
+# f_merge_year <- function(year) {
+#   lapply(rastlist_npp_year(year), rast) %>% 
+#   src() %>% 
+#   merge(., 
+#         filename =paste0(here("Data", "Processed_input"),"/npp_merged_",
+#                         year ,".tif")) 
+# }
+# 
+# f_merge_year("2001")
+
+
+
+
+
+
+# function for getting the downloaded rasterlist and creating a mosaic
+f_mosaic_year <- function(year) {
+  writeRaster(raster(ext = e, crs = epsg4326),
+            file=paste0(here("Data", "Processed_input"),"/mosaic_npp_",
+                        year ,".tif"),
+            format="GTiff",
+            overwrite=TRUE ) 
+  
+  mosaic_rasters(gdalfile=rastlist_npp_year(year),
+               dst_dataset=paste0(here("Data", "Processed_input"), "/mosaic_npp_",year, ".tif"),
+               of="GTiff")
+}  # f_mosaic_year("2001") #for testing. merges raster for 2001
+
+
+# run function for all years
+sapply(timestep, f_mosaic_year) # this takes a lot of time
+
+
+
+# get the merged tiffs
+mymergedfiles_npp <- list.files(path = here("Data", "Processed_input"),
+                            pattern="mosaic_npp",
+                            full.names=TRUE)
+mymergedfiles_npp
+npp <- rast(mymergedfiles_npp) 
+npp 
+names(npp) <- c(paste0("npp", timestep))
+
+# change oceans and non-grasslands to NA
+# Converting 0 to NA removes oceans, deserts etc from the analysis / those won't bother later aggregation 
+npp <- classify(npp, cbind(0, NA),
+                filename = here("Data",
+                                "Output",
+                                "npp_kgC_m2_scale00001_res000449.tif"),
+                overwrite = TRUE)
+
+
+################################### get the final file
+npp <- here("Data", "Output", "npp_kgC_m2_scale00001_res000449.tif") %>% # file to provide
+  rast()
+names(npp) <- c(paste0("npp", timestep))
+npp %>% plot() 
+# values ok [0, 26000] kg*C/m2 (remember scaling factor 0.0001)
+################################### get the final file
+
+```
+
+
+# Forest coverage - see TreeCoverMultiplier in the main text
+
+All 3 curves based on 1000 bootstraps (see the main text and the appendix).
+
+Tree canopy coverage data from: https://www.tandfonline.com/doi/full/10.1080/17538947.2013.786146 or the GEE catalog: https://developers.google.com/earth-engine/datasets/catalog/NASA_MEASURES_GFCC_TC_v3?hl=en 
+
+Note that we also addressed uncertainties related to this parameter in the file simulation.Rmd
+Ref: 
+Sexton, J. O., Song, X.-P., Feng, M., Noojipady, P., Anand, A., Huang, C., Kim, D.-H., Collins, K. M., Channan, S., DiMiceli, C., & Townshend, J. R. (2013). Global, 30-m resolution continuous fields of tree cover: Landsat-based rescaling of MODIS vegetation continuous fields with lidar-based estimates of error. International Journal of Digital Earth, 6(5), 427–448. https://doi.org/10.1080/17538947.2013.786146
+
+
+*TreeCoverMultiplier*
+```{r}
+# function that get rasterlist for different years
+rastlist_treecover_year <- function(year) {
+  list.files(path = here("Data", "Input"),
+             pattern= paste0("Forest_year", year), 
+             full.names = TRUE) }
+
+rastlist_treecover_year("2001") #check
+
+
+# function for getting the rasterlist and creating a mosaic
+f_mosaic_treecover_year <- function(year) {
+  writeRaster(raster(ext = e, crs = epsg4326) ,
+            file=paste0(here("Data", "Processed_input"),"/mosaic_treecover_",
+                        year ,".tif"),
+            format="GTiff",
+            overwrite=TRUE ) 
+  
+  mosaic_rasters(gdalfile=rastlist_treecover_year(year),
+               dst_dataset=paste0(here("Data", "Processed_input"), "/mosaic_treecover_",
+                                  year, ".tif"),
+               of="GTiff")
+}  
+
+#f_mosaic_year("2001") #for testing. merges raster for 2001
+sapply(timestep, f_mosaic_treecover_year) #does this for every year ! takes a lot of time and space
+
+
+# combine merged tiffs 
+mymergedfiles_treecover <- list.files(path = here("Data", "Processed_input"),
+                            pattern="mosaic_treecover",
+                            full.names=TRUE)
+mymergedfiles_treecover
+
+
+treecover <- rast(mymergedfiles_treecover) 
+
+# name the layers based on the tree curves (bottom, median, up)
+treecover_names <-  c("tc2001bot", "tc2001med", "tc2001up",
+                      "tc2002bot", "tc2002med", "tc2002up",
+                      "tc2003bot", "tc2003med", "tc2003up",
+                      "tc2004bot", "tc2004med", "tc2004up",
+                      "tc2005bot", "tc2005med", "tc2005up",
+                      "tc2006bot", "tc2006med", "tc2006up",
+                      "tc2007bot", "tc2007med", "tc2007up",
+                      "tc2008bot", "tc2008med", "tc2008up",
+                      "tc2009bot", "tc2009med", "tc2009up",
+                      "tc2010bot", "tc2010med", "tc2010up",
+                      "tc2011bot", "tc2011med", "tc2011up",
+                      "tc2012bot", "tc2012med", "tc2012up",
+                      "tc2013bot", "tc2013med", "tc2013up",
+                      "tc2014bot", "tc2014med", "tc2014up",
+                      "tc2015bot", "tc2015med", "tc2015up")
+
+names(treecover) <- treecover_names
+
+# mask to grasslands using npp (masked in GEE) to get the same amount of pixels.
+# Could be masked with mcd instead
+mask(treecover, npp$npp2015,
+     filename = here("Data", "Output", "treecover_res000449.tif"),
+     overwrite = TRUE,
+     wopt = wopt_options)
+
+
+
+################################### get the final file
+treecover <- here("Data", "Output", "treecover_res000449.tif") %>% # file to provide
+  rast()
+#names(treecover) <- treecover_names # check the names
+# ################################### get the final file
+
+treecover$tc2015up %>% plot()
+npp$npp2015 %>% plot()
+```
+
+
+
+
+
+
+
+
+
+# Temperature 
+
+Temperature downloaded from terraclim: https://www.nature.com/articles/sdata2017191  , we did not use GEE for temperature
+
+
+Note that we also addressed uncertainties related to this parameter in the file simulation.Rmd
+Ref:
+Abatzoglou, J. T., Dobrowski, S. Z., Parks, S. A., & Hegewisch, K. C. (2018). TerraClimate, a high-resolution global dataset of monthly climate and climatic water balance from 1958–2015. Scientific Data, 5(1), 170191. https://doi.org/10.1038/sdata.2017.191
+
+
+*mean annual temperature*
+```{r}
+# function for retrieving the temperature files for each years
+rastlist_terraclim <- function(min_or_max, year) {
+  list.files(path = here("Data", "Input"),
+             pattern= paste0(min_or_max, "_", year), 
+             full.names = TRUE) }
+
+rastlist_terraclim("tmin", "2001") # check
+
+
+# create a function that creates rasters based on a rastlist_terraclim, takes mean for each month (basically mean of min and max) and then takes annual mean temperature for every year
+f_mean_temp <- function(year) { mean(rast(rastlist_terraclim("tmin", year)), 
+                        rast(rastlist_terraclim("tmax", year))) %>% 
+  mean()  }
+
+# excecute the function
+tmean_annual_2001_2015 <- sapply(timestep, f_mean_temp) %>% 
+  rast() 
+names(tmean_annual_2001_2015) <- c(paste0("avgtemp_", timestep))
+
+# save the raster
+writeRaster(tmean_annual_2001_2015,
+            filename = here("Data", "Processed_input", "annualtemp_2001_2015_terraclim_original_reso.tif"),
+        overwrite = TRUE)
+
+
+
+# get the raster with original resolution
+tmean_annual_2001_2015 <- 
+  here("Data", "Processed_input", "annualtemp_2001_2015_terraclim_original_reso.tif") %>%
+  rast() 
+
+# Crop
+tic()
+tmean_annual_2001_2015_crop <-
+  crop(tmean_annual_2001_2015, npp$npp2015)
+toc() # 15sec
+
+
+
+# disaggregate # change names in the folder later if needed
+tic()
+tmean_annual_2001_2015_dis <-  
+  disaggregate(tmean_annual_2001_2015_crop,
+               fact = 9,
+               filename = here("Data","Processed_input",
+                               "annualtemp_2001_2015_terraclim_disagg.tif"),
+               overwrite = TRUE,
+               wopt = wopt_options ) 
+toc() #30min
+
+
+# get disaggregated rast
+tmean_annual_2001_2015_dis <- 
+  here("Data", "Processed_input",
+       "annualtemp_2001_2015_terraclim_disagg.tif") %>% 
+  rast()
+
+
+
+# terra::resample worked only when done layer by layer 
+ # when time, should create function for this
+ # probably fixed in the newest versions of terra
+tic()
+resample(tmean_annual_2001_2015_dis$avgtemp_2001,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2001_disagg_resamp.tif"),
+         wopt = wopt_options)
+toc()
+
+# 2002
+resample(tmean_annual_2001_2015_dis$avgtemp_2002,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2002_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2003
+resample(tmean_annual_2001_2015_dis$avgtemp_2003,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2003_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2004
+resample(tmean_annual_2001_2015_dis$avgtemp_2004,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2004_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+
+# 2005
+resample(tmean_annual_2001_2015_dis$avgtemp_2005,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2005_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2006
+resample(tmean_annual_2001_2015_dis$avgtemp_2006,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2006_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2007
+resample(tmean_annual_2001_2015_dis$avgtemp_2007,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2007_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2008
+resample(tmean_annual_2001_2015_dis$avgtemp_2008,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2008_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2009
+resample(tmean_annual_2001_2015_dis$avgtemp_2009,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2009_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2010
+resample(tmean_annual_2001_2015_dis$avgtemp_2010,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2010_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2011
+resample(tmean_annual_2001_2015_dis$avgtemp_2011,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2011_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2012
+resample(tmean_annual_2001_2015_dis$avgtemp_2012,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2012_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2013
+resample(tmean_annual_2001_2015_dis$avgtemp_2013,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2013_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2014
+resample(tmean_annual_2001_2015_dis$avgtemp_2014,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2014_disagg_resamp.tif"),
+         wopt = wopt_options)
+
+# 2015
+resample(tmean_annual_2001_2015_dis$avgtemp_2015,
+         npp$npp2015,
+         filename = here("Data", "Processed_input", "annualtemp_2015_disagg_resamp.tif"),
+         wopt = wopt_options)
+# 
+# Create function for this --> incomplete!!!!
+# ! f_resamp_temp <- function(var_temp) {
+# ! resample(tmean_annual_2001_2015_dis$var_temp,
+#          npp$npp2015, 
+#          filename = paste0(here("Data", "Processed_input"),
+#                            "/annualtemp_", "var_temp",
+#                            "_disagg_resamp.tif") )
+# }
+# 
+# f1 <- function(var_temp) {
+# resample(paste0(here("Data", "Processed_input"),
+#                            "/annualtemp_", var_temp,
+#                            "_disagg_resamp.tif") )
+# }
+# f1("avgtemp_2001")
+
+
+
+
+
+
+# collect resampled files (resampled one year at a time)
+rastlist_temp_year <- 
+  list.files(path = here("Data", "Processed_input"),
+             pattern= "annualtemp.+_disagg_resamp.tif", 
+             full.names = TRUE) 
+
+
+# create rast out of list
+temperature_resampled <- rastlist_temp_year %>%
+  rast()
+temperature_resampled$avgtemp_2015 %>% plot()
+
+
+#mask to grasslands. Again, using npp (masked to grasslands in GEE)
+temperature_masked <- 
+  mask(temperature_resampled, npp$npp2015,
+       filename = here("Data", "Output",
+                       "temperature_res000449.tif"),
+       wopt = wopt_options)
+
+
+
+
+
+
+
+################################### get the final file
+temperature <- here("Data", "Output", "temperature_res000449.tif") %>%
+  rast()
+names(temperature) <- c(paste0("avgtemp_", timestep))
+temperature %>% plot()
+################################### get the final file
+
+```
+
+
+
+
+# Terrain slopes
+
+Data from: https://www.nature.com/articles/s41597-020-0479-6
+Expressed originally in degrees*100 but we must convert them to slope%
+Ref: 
+Amatulli, G., McInerney, D., Sethi, T., Strobl, P., & Domisch, S. (2020). Geomorpho90m, empirical evaluation and accuracy assessment of global high-resolution geomorphometric layers. Scientific Data, 7(1), 162. https://doi.org/10.1038/s41597-020-0479-6
+
+
+
+*slopes*
+```{r}
+slope <- here("Data", "Input", "dtm_slope_merit.dem_m_250m_s0..0cm_2018_v1.0.tif") %>%
+  rast()
+
+
+# aggregate and change to percents. Slopes originally degree * 100 but we need slope% instead 
+slope_agg_percent <- aggregate(slope, fact = 2, na.rm = TRUE) %>% 
+  app(., function (x) {100 * tan((x/100)*pi/180  )})
+
+
+
+# Reclassify slope raster, which is now expressed in percents
+m_slopes <- c(0, 10, 1,
+              10, 30, 0.7,
+              30, 60, 0.4,
+              60, Inf, 0) # George and Lyle 2009
+rclmat_slopes <- matrix(m_slopes, ncol=3, byrow=TRUE)
+
+slope_agg_percent_reclassified <-
+  classify(slope_agg_percent,
+           rclmat_slopes, include.lowest = TRUE, othersNA = TRUE) #
+
+# resample 
+slope_agg_percent_reclassified_resamp <-   resample(slope_agg_percent_reclassified, npp$npp2015) 
+slope_agg_percent_reclassified_resamp_masked <-   mask(slope_agg_percent_reclassified_resamp, npp$npp2015) 
+
+slope_agg_percent_reclassified_resamp_masked[slope_agg_percent_reclassified_resamp_masked > 1] <- 1 # do this with classify --> faster
+
+
+writeRaster(slope_agg_percent_reclassified_resamp_masked,
+            here("Data", "Output", "terrain_slope_res000449.tif"),
+            names = c("slope"),
+            overwrite = TRUE) 
+
+
+#################################  get the file created above 
+slope <- here("Data", "Output", "terrain_slope_res000449.tif") %>% 
+  rast()
+names(slope)<- c("slope")
+#################################  get the file created above 
+
+plot(slope)
+
+```
+
+# Combine rasts
+Combine files created above. That is: npp, treecover, temperature, slopes.
+Note that all the data is cropped and masked to areas where mcd = 1 (meaning the land cover class is grassland)
+
+*combine*
+```{r}
+# combine
+data_all_but_animals <- c(npp, temperature, treecover, slope) 
+#maybe no need to save this huge stack?
+names(data_all_but_animals)
+```
+
+
+# Gridded Livestock of the World (GLW) - dasymentric method
+
+We want to compare carrying capacity (CC) results with the GLW modelled livestock numbers, which has been provided with 5 minutes of arc. Therefore we upscale data to this resolution. The GLW data can be downloaded from here:
+http://www.fao.org/livestock-systems/global-distributions/en/
+
+Ref: 
+Gilbert, M., Nicolas, G., Cinardi, G., Van Boeckel, T. P., Vanwambeke, S. O., Wint, G. R. W., & Robinson, T. P. (2018). Global distribution data for cattle, buffaloes, horses, sheep, goats, pigs, chickens and ducks in 2010. Scientific Data, 5, 180227. https://doi.org/10.1038/sdata.2018.227
+
+
+Note that we also addressed uncertainties related to this parameter in the file simulations.RMD.
+
+```{r}
+# get GLW 3 Da datasets for different species. Note that the unit is animal species per pixel
+animals <- c(here("Data", "Input", "5_Ct_2010_Da.tif")%>% rast(), #cattle
+             here("Data", "Input", "5_Sh_2010_Da.tif") %>% rast(), #sheep
+             here("Data", "Input", "5_Bf_2010_Da.tif") %>% rast(), #buffalo
+             here("Data", "Input", "5_Ho_2010_Da.tif") %>% rast(), #horse
+             here("Data", "Input", "5_Gt_2010_Da.tif") %>% rast(), #goat
+             here("Data", "Input", "8_Areakm.tif") %>% rast()) # area of each pixel
+
+names(animals) <- c("cattle", "sheep", "buffalo", "horse", "goat", "pix_area_km2")
+
+# crop the data. We use this as template when upscaling the other data
+animals_crop <- crop(animals, npp$npp2015)
+
+# check total number of animals in all regions (no masking or cropping yet)
+# global(animals$`5_Ct_2010_Da`, fun = sum,  na.rm = TRUE ) / 1e6 # 1457 million cows 
+# global(animals$`5_Sh_2010_Da`, fun = sum,  na.rm = TRUE ) / 1e6 # 1124 m sheep
+# global(animals$`5_Bf_2010_Da`, fun = sum,  na.rm = TRUE ) / 1e6 # 191 million buffalos
+# global(animals$`5_Ho_2010_Da`, fun = sum,  na.rm = TRUE ) / 1e6 # 62 million horses
+
+```
+
+
+# Upscale all the data to 5arcmin, convert to vector
+This vector data is used when accounting for the uncertainties in the file simulations.Rmd 
+
+```{r}
+# change so that also animals come to the same raster.
+# maybe do not save the first attemp as a tif, just give a name?
+# and the name could be data_for_simulations.tif
+
+
+#aggregate, 
+tic()
+data_all_but_animals_agg <-  
+  aggregate(data_all_but_animals, fact = 18, na.rm = TRUE,
+            filename = here("Data", "Processed_input", "data_all_but_animals_aggregated.tif"),
+            overwrite = TRUE,
+            wopt = wopt_options) 
+toc() # 100min 
+
+
+
+# resample aggregated data to 5arcmin using animals_crop as a template
+tic()
+data_all_but_animals_5arcmin <-
+  resample(data_all_but_animals_agg,
+         animals_crop,
+         filename = here("Data", "Processed_input", "data_all_but_animals_5arcmin.tif"),
+         overwrite = TRUE,
+         wopt = wopt_options)
+toc() #17min        
+
+
+
+# add animals to the same raster
+data_all_5arcmin <- c(data_all_but_animals_5arcmin, animals_crop)
+
+
+# mask everything with the npp. 
+tic()
+data_for_simulations <- 
+  mask(data_all_5arcmin, data_all_5arcmin$npp2015,
+       filename = here("Data", "Output", "data_for_simulations.tif"),
+       overwrite = TRUE,
+       wopt = wopt_options)
+toc()
+
+
+
+# convert this to vector and save. This data is used in simulation.Rmd file
+data_for_simulations_df <- data_for_simulations %>% 
+  as.data.frame(., xy=TRUE) %>% 
+  as.data.table() %>% 
+  fwrite(., here("Data", "Output", "data_for_simulations.csv"))
+
+
+
+
+# get the vector data
+data_for_simulations_df <- here("Data",
+                                "Output",
+                                "data_for_simulations.csv") %>% 
+  fread()
+
+data_for_simulations_df
+#########################
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Continue without simulation 
+
+Although all the results we present in the main text are based on the simulation, we also calculated aboveground biomass (AGB) and carrying capacity (CC) without assessing for the uncertainty. This enables us to produce AGB and CC estimates with the resolution of 500 m. However, now the input parameter will not fluctuate and therefore these 500m AGB and CC output maps are different to simulated AGB and CC maps.
+
+
+Again, we do not account for the uncertainties. below. Instead, we just calculate everything with average values found in the literature. See simulation.Rmd for the uncertainty assessment,
+
+
+
+## Forage requirements of the animals -- not accounted for the uncertainties 
+We calculated forage requirement for whole year instead of growing period. This makes sense as any animal unit (AU) must eat every day no matter whether grass grows or not. 
+
+Note that we also addressed uncertainties related to this parameter in the file simulations.Rmd
+
+*forage requirements not accounted for the uncertainties *
+```{r}
+au_weight <- 455 
+intake <- 0.02 # 2 % 
+no_days <- 365
+
+# how many kg of dry matter AU eats in year (NPP is dry matter as well)
+forage_req <- au_weight * intake * no_days # 3321.5
+```
+
+
+
+
+
+# Calculating aboveground biomass (AGB) and carrying capacity (CC) -- not accounted for the uncertainties 
+
+We convert NPP to abovground biomass and adjust it as described in the main text.
+
+MODIS webpage notifies original scaling factor of NPP to be 0.0001 and therefore final results should be divided by 10 000. The unit of NPP is originally kg*C /m2 
+First, we calculate NPP with unit kg*C /m2 (divide by 10000)
+
+Next, we convert NPP to biomass using biomass to carbon conversion factor of 0.47. Note that we divide carbon by 0.47 so amount of biomass is approximately twice as big as amount of carbon. We want to express this to km2 so the unit will be kg of biomass per square kilometer
+npp_biomass_kg_km2 = (npp_kgC_m2 / 0.47) * 1e6 or expressed with the original data 
+npp_biomass_kg_km2 = ((NPP / 10000 ) / 0.47 ) * 1e6 
+                   = (NPP * 100) / 0.47
+
+Finally, we can calculate aboveground biomass. 
+AGB_kg_km2 = npp_biomass_kg_km2 * fANPP, where fANPP = 0.171 + 0.0129 temperature
+Note that AGB can be smaller than zero when average temperature goes below -(0.171/0.0129) = - 13.26. Areas where temperature < -13 celsius should be removed from the analysis. We do this later when we upscale the raster.
+
+In addition we must reduce amount of feed depending on the special characteristic of the ground (as described in the article). Therefore (expressed with notation used here) aboveground biomass animals can sustainably use is
+AGB_kg_km2 = npp_biomass_kg_km2 * (0.171 + 0.0129 * temperature )* forest * slope  
+
+We also provide codes for calculating unrestricted aboveground biomass (biomass not adjusted with forest and slopes)
+
+*npp from carbon to biomass and calculation of AGB - not accounted for the uncertainties *
+```{r}
+# 1) create SpatRasterDataset. For some reason it works better 
+npp_sds <- sds(npp)
+
+# 2) calculate npp_biomass_kg_km2 for npp layers
+tic()
+npp_biomass_kg_km2 <-
+  lapp(npp_sds,  
+       fun = function(x) {x*100/0.47},
+       filename = here("Data", "Output", "npp_no_simulation_biomass_kg_km2_res000449.tif"),
+       overwrite = TRUE, 
+       wopt = list(gdal = c("BIGTIFF=YES","PREDICTOR = 2",
+                            "NUM_THREADS = ALL_CPUS"),
+                   names = c(paste0("npp_biom_kgkm2_", timestep))))
+toc() # 30min
+
+# 3) AGB aboveground biomass
+ # for this we need median forest curve only (not bot or up curves)
+treecover_median_curve <- treecover %>% 
+  subset(., grep("med", names(treecover)))
+
+ # get the npp_biomass_kg_km2 if needed
+# npp_biomass_kg_km2 <- here("Data", "Output",
+#                            "npp_no_simulation_biomass_kg_km2_res000449.tif") %>% 
+#   rast()
+
+r_sds <- sds(npp_biomass_kg_km2, temperature, treecover_median_curve, slope)
+
+
+# function for lapp
+f_agb <- function(npp_biomass_kg_km2, temperature, treecover_median_curve, slope) {
+  npp_biomass_kg_km2 * (0.171+ 0.0129* temperature) * 
+    treecover_median_curve * 
+    slope
+}
+
+AGB <- lapp(r_sds, f_agb, recycle = TRUE,
+           filename = here("Data", "Output", "AGB_no_simulation_biomass_kg_km2_res000449.tif"),
+           overwrite = TRUE,
+           wopt = list(names = c(paste0("agb_", timestep)),
+                   gdal = c("BIGTIFF=YES","PREDICTOR = 2",
+                            "NUM_THREADS = ALL_CPUS"))) 
+
+
+# remove negative values of ab
+AGB_neg_removed <- lapp(sds(AGB), function(x){
+  x[x < 0] <- NA; return(x)}, 
+  filename = here("Data", "Output", "AGB_no_simulation_neg_removed_biomass_kg_km2_res000449.tif"),
+  overwrite = TRUE,
+  wopt = list(names = c(paste0("ab_", timestep)),
+              gdal = c("BIGTIFF=YES","PREDICTOR = 2",
+                       "NUM_THREADS = ALL_CPUS")))
+
+
+# Calculate CC
+CC <- lapp(sds(AGB_neg_removed),
+           function(x) { x / forage_req},
+             filename =  here("Data", "Output", "CC_no_simulation_AU_km2_res000449.tif"),
+  overwrite = TRUE,
+  wopt = list(names = c(paste0("CC_", timestep)),
+              gdal = c("BIGTIFF=YES","PREDICTOR = 2",
+                       "NUM_THREADS = ALL_CPUS")))
+
+
+
+#  get the file created above 
+AGB <- here("Data", "Output", "AGB_no_simulation_neg_removed_biomass_kg_km2_res000449.tif") %>% 
+  rast() # neg values removed. Unit is biomass kg_km2
+
+
+CC <- here("Data", "Output", "CC_no_simulation_AU_km2_res000449.tif") %>%
+  rast() # unit is AU per km2
+
+
+# upscale to 5arcmin and save
+AGB_5arcmin <- aggregate(AGB, fact = 18, na.rm = TRUE) %>% 
+  resample(., data_all_5arcmin$npp2015 ,
+           filename =  here("Data", "Output", "agb_no_simulation_biomass_kg_km2_5arcmin.tif"),
+           overwrite = TRUE,
+           wopt = wopt_options)
+
+CC_5arcmin <- aggregate(CC, fact = 18, na.rm = TRUE) %>% 
+  resample(., data_all_5arcmin$npp2015,
+           filename =  here("Data", "Output", "cc_no_simulation_AU_km2_5arcmin.tif"),
+           overwrite = TRUE,
+           wopt = wopt_options)
+
+#################################  get the files created above 
+AGB_5arcmin <- here("Data", "Output", "agb_no_simulation_biomass_kg_km2_5arcmin.tif") %>% 
+  rast()
+
+CC_5arcmin <- here("Data", "Output", "cc_no_simulation_AU_km2_5arcmin.tif") %>% 
+  rast()
+#################################
+plot(CC_5arcmin$CC_2015)
+
+```
+
+
+
+# same calculation than above but for unrestricted AGB
+For comparison, let's calculate AGB without applying any restrictions (slopes, tree cover)
+
+```{r}
+# get data created above in 2)
+npp_biomass_kg_km2 <- 
+  here("Data", "Output", "npp_no_simulation_biomass_kg_km2_res000449.tif") %>% 
+  rast()
+
+r_sds_unrestricted <- sds(npp_biomass_kg_km2, temperature)
+
+
+# function for lapp
+f_agb_unrestricted <- function(npp_biomass_kg_km2, temperature) {
+  npp_biomass_kg_km2 * (0.171+ 0.0129* temperature) 
+}
+
+
+# calculate
+tic()
+AGB_unrestricted <- lapp(r_sds_unrestricted, f_agb_unrestricted, recycle = TRUE,
+           filename = here("Data", "Output", "AGB_no_simulation_unrestricted_biomass_kg_km2_res000449.tif"),
+           overwrite = TRUE,
+           wopt = wopt_options) 
+toc() # 42min
+
+
+# remove negative values
+tic()
+AGB_unrestricted_neg_removed <- lapp(sds(AGB_unrestricted), function(x){
+  x[x < 0] <- NA; return(x)}, 
+  filename = here("Data", "Output", "AGB_no_simulation_unrestricted_neg_removed_biomass_kg_km2_res000449.tif"),
+  overwrite = TRUE,
+  wopt = wopt_options)
+toc()
+
+
+# upscale to 5arcmin and save
+tic()
+AGB_5arcmin_unrestricted <- aggregate(AGB_unrestricted_neg_removed, fact = 18, na.rm = TRUE) %>% 
+  resample(., animals_crop ,
+           filename =  here("Data", "Output", "agb_no_simulation_unrestricted_biomass_kg_km2_5arcmin.tif"),
+           overwrite = TRUE,
+           wopt = wopt_options)
+toc() # 15min
+
+
+
+ ## also 5arcmin npp biomass needed
+tic()
+npp_biomass_kg_km2_5arcmin <- aggregate(npp_biomass_kg_km2, fact = 18, na.rm = TRUE) %>% 
+  resample(., animals_crop ,
+           filename =  here("Data", "Output", "npp_no_simulation_biomass_kg_km2_5arcmin.tif"),
+           overwrite = TRUE,
+           names = c(paste0("npp_biomass_", timestep)),
+           wopt = wopt_options)
+toc() # 12 min
+```
+
+
+

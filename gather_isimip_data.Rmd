@@ -1,0 +1,367 @@
+---
+title: "ISIMIP2a"
+author: "Johannes Piipponen"
+date: "9 12 2021"
+output: html_document
+---
+
+# Introduction
+In this file we gather ISIMIP2a modelled NPP data. See Appendix S2.10
+
+```{r include = FALSE}
+library(tidyverse); library(raster); library(gdalUtils); library(scico);
+library(sf); library(terra); library(data.table); library(here); library(tictoc)
+# Create valid PROJ4 string for EPSG 4326
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" 
+# extents for templaterasters
+e <- extent(-180,180,-90,90) 
+# timestep isimi
+timestep_isimip <- 2000:2010
+# options, mainly for terra package
+terraOptions(tempdir= here("Temp_R"))
+terraOptions()
+rasterOptions(tmpdir= here("Temp_R"))
+rasterOptions()
+wopt_options <- list(gdal = c("BIGTIFF=YES",
+                "PREDICTOR = 2",
+                "NUM_THREADS = ALL_CPUS"))
+
+
+
+data_for_simulations <- here("Data", "Output", "data_for_simulations.tif") %>% 
+  rast()
+data_for_simulations <- data_for_simulations$npp2015
+
+months <- rep(seq(0,10), each = 12)
+```
+
+
+
+
+# get and modify data 1 (caraib)
+Note that watch_nobc scenario has only years 1971-2001 so we won't use that
+princeton_nobc in for 1971-2012 but we use it only until 2010
+
+"Unit originally C m-2 s-1, and it indicates the average npp in kg per m2 per second of that month. So if you want to have annual total npp in g C m-2, you will need to average(12 monthly npp values) * 1000 g per kg * 86400 second per day * 365 days = g C m-2, where “average(12 monthly npp values) “ is the annual mean npp in kg C m-2 s-1. "
+
+
+! We want the unit g C m2 yr !
+
+
+```{r}
+rastlist_isimip_caraib <- 
+  list.files(path = here("Data", "Supplementary", "ISIMIP"),
+             pattern= paste0("caraib"), 
+             full.names = TRUE) 
+
+rastlist_isimip_caraib
+
+#conver to raster 
+caraib1 <- rastlist_isimip_caraib[1] %>% rast() # gswp3
+caraib2 <- rastlist_isimip_caraib[2] %>% rast() # princeton
+caraib3 <- rastlist_isimip_caraib[3] %>% rast() # watch-wfdei
+
+
+# select only months that represent years 2000-2010
+caraib1 <- subset(caraib1, c(349:480)) # only years 2000-2010
+caraib2 <- subset(caraib2, c(349:480))
+caraib3 <- subset(caraib3, c(349:480))
+
+
+# 1
+# yearly averages (multiply with seconds and days)
+r <- stack(caraib1 * 365 * 86400)  
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+
+caraib1_yr <- rast(all_years)
+names(caraib1_yr) <- paste0("caraib1_", timestep_isimip)
+
+
+
+# 2
+r <- stack(caraib2 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+caraib2_yr <- rast(all_years)
+names(caraib2_yr) <- paste0("caraib2_", timestep_isimip)
+
+
+
+# 3
+r <- stack(caraib3 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+caraib3_yr <- rast(all_years)
+names(caraib3_yr) <- paste0("caraib3_", timestep_isimip)
+
+
+# combine rasters
+caraib_all <- c(caraib1_yr, caraib2_yr, caraib3_yr)
+names(caraib_all)
+plot(caraib_all)
+# disaggregate and mask when all ISIMIP rasters combined
+```
+
+
+
+# get and modify data 2 (lpjml)
+```{r}
+rastlist_isimip_lpjml <- 
+  list.files(path = here("Data", "Supplementary", "ISIMIP"),
+             pattern= paste0("lpjml"), 
+             full.names = TRUE) 
+
+rastlist_isimip_lpjml # can use only 1-3
+
+
+
+#conver to raster 
+lpjml1 <- rastlist_isimip_lpjml[1] %>% rast() # gswp3
+lpjml2 <- rastlist_isimip_lpjml[2] %>% rast()  # princeton
+lpjml3 <- rastlist_isimip_lpjml[3] %>% rast()  # watch-wfdei
+
+
+# select only months that represent years 2000-2010
+lpjml1 <- subset(lpjml1, c(349:480)) # only years 2000-2010
+lpjml2 <- subset(lpjml2, c(349:480))
+lpjml3 <- subset(lpjml3, c(349:480))
+
+
+# same things than above
+# 1
+r <- stack(lpjml1 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+lpjml1_yr <- rast(all_years)
+names(lpjml1_yr) <- paste0("lpjml1_", timestep_isimip)
+
+
+
+# 2
+r <- stack(lpjml2 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+lpjml2_yr <- rast(all_years)
+names(lpjml2_yr) <- paste0("lpjml2_", timestep_isimip)
+
+
+
+# 3
+r <- stack(lpjml3 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+lpjml3_yr <- rast(all_years)
+names(lpjml3_yr) <- paste0("lpjml3_", timestep_isimip)
+
+
+# combine rasters
+lpjml_all <- c(lpjml1_yr, lpjml2_yr, lpjml3_yr)
+names(lpjml_all)
+plot(lpjml_all)
+```
+
+# get and modify data 3 (dlem)
+
+```{r}
+rastlist_isimip_dlem <- 
+  list.files(path = here("Data", "Supplementary", "ISIMIP"),
+             pattern= paste0("dlem"), 
+             full.names = TRUE) 
+
+rastlist_isimip_dlem
+
+dlem1 <- rastlist_isimip_dlem[1] %>% rast()
+dlem2 <- rastlist_isimip_dlem[2] %>% rast()
+dlem3 <- rastlist_isimip_dlem[3] %>% rast()
+
+# select only months that represent years 2000-2010
+dlem1 <- subset(dlem1, c(349:480)) # only years 2000-2010
+dlem2 <- subset(dlem2, c(349:480))
+dlem3 <- subset(dlem3, c(349:480))
+
+
+# same things than above
+# 1
+r <- stack(dlem1 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+dlem1_yr <- rast(all_years)
+names(dlem1_yr) <- paste0("dlem1_", timestep_isimip)
+# dlem1_dis_cropmask <- disaggregate(dlem1_yr, fact = 6) %>% 
+#   crop(., ab_5y_med ) %>% 
+#   mask(., ab_5y_med )
+
+
+# 2
+r <- stack(dlem2 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+dlem2_yr <- rast(all_years)
+names(dlem2_yr) <- paste0("dlem2_", timestep_isimip)
+# dlem2_dis_cropmask <- disaggregate(dlem2_yr, fact = 6) %>% 
+#   crop(., ab_5y_med ) %>% 
+#   mask(., ab_5y_med )
+
+
+# 3
+r <- stack(dlem3 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+dlem3_yr <- rast(all_years)
+names(dlem3_yr) <- paste0("dlem3_", timestep_isimip)
+# dlem3_dis_cropmask <- disaggregate(dlem3_yr, fact = 6) %>% 
+#   crop(., ab_5y_med ) %>% 
+#   mask(., ab_5y_med )
+
+
+
+# combine rasters
+dlem_all <- c(dlem1_yr, dlem2_yr, dlem3_yr)
+names(dlem_all)
+plot(dlem_all)
+```
+
+# get and modify data 4 (orchidee)
+
+```{r}
+rastlist_isimip_orchidee <- 
+  list.files(path = here("Data", "Supplementary", "ISIMIP"),
+             pattern= paste0("orchidee"), 
+             full.names = TRUE) 
+
+rastlist_isimip_orchidee
+
+orchidee1 <- rastlist_isimip_orchidee[1] %>% rast()
+orchidee2 <- rastlist_isimip_orchidee[2] %>% rast()
+orchidee3 <- rastlist_isimip_orchidee[3] %>% rast()
+
+
+# select only months that represent years 2000-2010
+orchidee1 <- subset(orchidee1, c(349:480)) 
+orchidee2 <- subset(orchidee2, c(349:480))
+orchidee3 <- subset(orchidee3, c(349:480))
+
+
+
+# same things than above
+# 1
+r <- stack(orchidee1 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+orchidee1_yr <- rast(all_years)
+names(orchidee1_yr) <- paste0("orchidee1_", timestep_isimip)
+
+
+
+# 2
+r <- stack(orchidee2 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+orchidee2_yr <- rast(all_years)
+names(orchidee2_yr) <- paste0("orchidee2_", timestep_isimip)
+
+
+
+# 3
+r <- stack(orchidee3 *  365 * 86400) 
+all_years <- stack()
+for (n in 0:10) {
+index <- which(months == n)
+annual_mean <- mean(r[[index]], na.rm =T)
+all_years <- stack(all_years, annual_mean)}
+orchidee3_yr <- rast(all_years)
+names(orchidee3_yr) <- paste0("orchidee3_", timestep_isimip)
+
+
+
+
+# combine rasters
+orchidee_all <- c(orchidee1_yr, orchidee2_yr, orchidee3_yr)
+names(orchidee_all)
+plot(orchidee_all)
+```
+
+
+# Combine all rasters, disaggregate and mask
+132 layers = 11 years * 3 climate forcing * 4 models 
+
+```{r}
+isimip_all_kg_C_m2 <- c(caraib_all, lpjml_all, dlem_all, orchidee_all)
+names(isimip_all)
+
+# convert to kg C km2 and remove values smaller than 1
+isimip_all_kg_C_km2 <- isimip_all_kg_C_m2 * 1e6
+isimip_all_kg_C_km2[isimip_all_kg_C_km2 < 1] <- NA
+summary(isimip_all_kg_C_km2)
+
+isimip_all_disag_cropmask <- disaggregate(isimip_all_kg_C_km2, fact = 6) %>% 
+  crop(., data_for_simulations) %>%
+  mask(., data_for_simulations)
+
+# save as csv
+isimip_all_disag_cropmask_df <-
+  as.data.frame(isimip_all_disag_cropmask, xy = T) %>% 
+  as.data.table()
+
+fwrite(isimip_all_disag_cropmask_df,
+       here("Data", "Supplementary", "isimip_npp_kgC_km2_yr.csv"))
+
+
+
+
+# select only year 2000
+isimip_2000 <- terra::subset(isimip_all_disag_cropmask,
+                             grep('_2000', names(isimip_all),
+                                              value = T))
+isimip_2000 %>% names()
+isimip_2000 # here we find extreme range for uncertainty assessment
+isimip_2000 %>% plot()
+
+
+# find extremes for each cell- Probably best to convert to df
+isimip_2000_df <- as.data.frame(isimip_2000, xy = TRUE)
+
+isimip_2000_vars <- isimip_2000_df %>%
+  dplyr::select(contains("2000"))
+
+isimip_range_2000 <- isimip_2000_vars %>% 
+  mutate(min2000 =rowMins(as.matrix(isimip_2000_vars), value = TRUE),
+         max2000 = rowMaxs(as.matrix(isimip_2000_vars), value = TRUE))
+
+
+```
+

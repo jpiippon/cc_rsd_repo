@@ -1,0 +1,276 @@
+Google Earth Engine (GEE) codes used in Global trends in grassland carrying capacity and relative stocking density of livestock"
+Coding environment in https://code.earthengine.google.com, datasets from Earth Engine Data Catalog https://developers.google.com/earth-engine/datasets 
+
+
+MCD
+Ref: 
+Sulla-Menashe, D., & Friedl, M. A. (2018). User guide to collection 6 MODIS land cover (MCD12Q1 and MCD12C1) product. USGS: Reston, VA, USA, 1–18. https://doi.org/10.5067/MODIS/MCD12Q1.006
+////////////////////////////////////////////////////// MCD (Land Cover Types)
+// years to process (from start year t0 to end year t1)
+var t0 = "2001"; // uneven-length period is better (mode works better when uneven numbers. I.e 9, 9, 9, 8, 8, 8 --> GEE thinks mode is 9)
+var t1 = "2015"; 
+
+var LC = ee.ImageCollection('MODIS/006/MCD12Q1')
+.select('LC_Type1')
+.filterDate(t0.concat("-01-01"),t1.concat("-12-31"))
+.mode(); // mode is better than median
+
+print(LC);
+// Select only values 8 9 and 10 and give them new value 1, otherwise zero
+var ReclassifiedLC = LC
+.remap([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17],
+           [0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0]);
+
+Map.addLayer(ReclassifiedLC.mask(ReclassifiedLC), {palette: ['000000', '00FF00'], max: 1},'Grasslands');
+print(ReclassifiedLC);
+
+
+// Define bounds, projection and mask
+var bounds = ee.Geometry.Rectangle([-179.999,-80, 180, 80],'EPSG:4326',false); //a geometry 
+//var bounds = ee.Geometry.Rectangle([22, 60, 31, 70], 'EPSG:4326', false) ; // good for practising
+var modis = LC; //projection we use for output maps
+var modisProjection = modis.projection(); // Get information about the MODIS projection.
+var mask = ReclassifiedLC.eq(1); // mask: data only for areas where MCD equals savannas, woody savannas or grasslands
+
+var Reclassified_clipped_LC = ReclassifiedLC.clip(bounds);
+
+
+////////////////////////////////////////////////////////   Export 
+Export.image.toDrive({
+  image: Reclassified_clipped_LC.toFloat(),
+  description: "MCD_mode2001_2015",
+  scale: 500, 
+  region: bounds,
+  maxPixels:1e13,
+  folder: 'GEE_MCD'
+});
+
+NPP
+Ref: 
+Running, S. W., & Zhao, M. (2019). MOD17A3HGF MODIS/Terra Net Primary Production Gap-Filled Yearly L4 Global 500 m SIN Grid V006. 2019, distributed by NASA EOSDIS Land Processes DAAC. 35. https://doi.org/10.5067/MODIS/MOD17A3HGF.006 
+////////////////////////////////////////////////////// MCD (Land Cover Types) --> needed for masking
+// years to process (from start year t0 to end year t1)
+var t0 = "2001"; // uneven-length period is better (mode works better when uneven numbers. I.e 9, 9, 9, 8, 8, 8 --> GEE thinks mode is 9)
+var t1 = "2015"; 
+
+var LC = ee.ImageCollection('MODIS/006/MCD12Q1')
+.select('LC_Type1')
+.filterDate(t0.concat("-01-01"),t1.concat("-12-31"))
+.mode(); // mode is better than median
+
+print(LC);
+// Select only values 8 9 and 10 and give them new value 1, otherwise zero
+var ReclassifiedLC = LC
+.remap([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17],
+           [0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0]);
+
+Map.addLayer(ReclassifiedLC.mask(ReclassifiedLC), {palette: ['000000', '00FF00'], max: 1},'Grasslands');
+print(ReclassifiedLC);
+
+
+// Define bounds, projection and mask
+var bounds = ee.Geometry.Rectangle([-179.999,-80, 180, 80],'EPSG:4326',false); //a geometry 
+//var bounds = ee.Geometry.Rectangle([22, 60, 31, 70], 'EPSG:4326', false) ; // good for practising
+var modis = LC; //projection we use for output maps
+var modisProjection = modis.projection(); // Get information about the MODIS projection.
+var mask = ReclassifiedLC.eq(1); // mask: data only for areas where MCD equals savannas, woody savannas or grasslands
+
+print(modisProjection);
+
+
+
+
+////////////////////////////////////////////////////// NPP (gap filled)
+var visualization = {bands: ['Npp'], min: 0.0, max: 19000.0, palette: ['bbe029', '0a9501', '074b03']};
+
+var NPPdata = ee.ImageCollection('MODIS/006/MOD17A3HGF').select('Npp');
+print(NPPdata);// here you will see that there is only one raster for each year, so I think it is not necessary to do the following procedures to get every year. I commented them out below
+
+var NPPdata_list =NPPdata.toList(NPPdata.size());
+print(NPPdata_list);
+var NPPsize = NPPdata_list.size().getInfo();
+print(NPPsize);
+
+//for (var i=0; i<NPPsize; i++) {  //you would use this line if you needed all years 2000-2019
+ for (var i=1; i<16; i++) { //you would use this line if you needed years 2001 to 2015
+  var NPPimage = ee.Image(NPPdata_list.get(i));
+  var date = ee.Date(NPPimage.get('system:time_start')).format('YYYY');
+  date = date.getInfo();
+  
+// crop and mask
+var masked_NPPimage = NPPimage.updateMask(mask); 
+masked_NPPimage = masked_NPPimage.clip(bounds);
+masked_NPPimage = masked_NPPimage.reproject({
+      crs: modisProjection,
+      scale: 500
+    });
+
+Map.addLayer(masked_NPPimage, visualization, 'NPP ' + date);
+
+
+  Export.image.toDrive({
+    image: masked_NPPimage,
+    description: 'NPP' + date,
+    fileNamePrefix: 'NPP' + date,
+    folder: 'GEE_NPP',
+    scale: 500,
+    region: bounds,
+   maxPixels: 1e13,
+  });
+}
+
+
+TreeCoverMultiplier
+Ref: 
+Sexton, J. O., Song, X.-P., Feng, M., Noojipady, P., Anand, A., Huang, C., Kim, D.-H., Collins, K. M., Channan, S., DiMiceli, C., & Townshend, J. R. (2013). Global, 30-m resolution continuous fields of tree cover: Landsat-based rescaling of MODIS vegetation continuous fields with lidar-based estimates of error. International Journal of Digital Earth, 6(5), 427–448. https://doi.org/10.1080/17538947.2013.786146 
+////////////////////////////////////////////////////// MCD (Land Cover Types)
+// years to process (from start year t0 to end year t1)
+var t0 = "2001"; // uneven-length period is better (mode works better when uneven numbers. I.e 9, 9, 9, 8, 8, 8 --> GEE thinks mode is 9)
+var t1 = "2015";
+var LC = ee.ImageCollection('MODIS/006/MCD12Q1')
+.select('LC_Type1')
+.filterDate(t0.concat("-01-01"),t1.concat("-12-31"))
+.mode(); // mode is better than median
+// print(LC);
+
+// Select only values 8 9 and 10 and give them new value 1, otherwise zero
+var ReclassifiedLC = LC
+.remap([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17],
+           [0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0]);
+
+//Map.addLayer(ReclassifiedLC.mask(ReclassifiedLC), {palette: ['000000', '00FF00'], max: 1},'Grasslands');
+// print(ReclassifiedLC);
+
+// Define:
+var bounds = ee.Geometry.Rectangle([-179.999,-80, 180, 80],'EPSG:4326',false); //a geometry
+//var bounds = ee.Geometry.Rectangle([22, 60, 31, 70], 'EPSG:4326', false) ; // good for practising
+var modis = LC; //projection we use for output maps
+var modisProjection = modis.projection(); // Get information about the MODIS projection.
+var mask = ReclassifiedLC.eq(1); // mask: data only for areas where MCD equals savannas, woody savannas or grasslands
+
+////////////////////////////////////////////////////// Forest Cover for years 2000-2015
+// First, interpolate the coverage for each year: e.g. calculate the difference between years 2000 and 2005, then distribute it to each year
+// variable collection has 16 layers: one layer for each year. These layers must be reclassified
+var treeCanopyCoverVis = {min: 0.0,  max: 100.0,  palette: ['ffffff', 'afce56', '5f9c00', '0e6a00', '003800']};
+
+var dataset = ee.ImageCollection('NASA/MEASURES/GFCC/TC/v3');
+
+var treeCanopyCoverMean2000 = dataset.filter(ee.Filter.date('2000-01-01', '2000-12-31')).select('tree_canopy_cover').mean();
+var treeCanopyCoverMean2005 = dataset.filter(ee.Filter.date('2005-01-01', '2005-12-31')).select('tree_canopy_cover').mean();
+var treeCanopyCoverMean2010 = dataset.filter(ee.Filter.date('2010-01-01', '2010-12-31')).select('tree_canopy_cover').mean();
+var treeCanopyCoverMean2015 = dataset.filter(ee.Filter.date('2015-01-01', '2015-12-31')).select('tree_canopy_cover').mean();
+var five = ee.Image(5);
+
+var dif2000_05 = treeCanopyCoverMean2005.subtract(treeCanopyCoverMean2000);//.double()
+var dif2005_10 = treeCanopyCoverMean2010.subtract(treeCanopyCoverMean2005);
+var dif2010_15 = treeCanopyCoverMean2015.subtract(treeCanopyCoverMean2010);
+
+var yearly_difference2000_05 = dif2000_05.divide(five);//.double()
+var yearly_difference2005_10 = dif2005_10.divide(five);
+var yearly_difference2010_15 = dif2010_15.divide(five);
+
+var treeCanopyCoverMean2001 = treeCanopyCoverMean2000.add(yearly_difference2000_05).float();
+var treeCanopyCoverMean2002 = treeCanopyCoverMean2001.add(yearly_difference2000_05).float();
+var treeCanopyCoverMean2003 = treeCanopyCoverMean2002.add(yearly_difference2000_05).float();
+var treeCanopyCoverMean2004 = treeCanopyCoverMean2003.add(yearly_difference2000_05).float();
+var treeCanopyCoverMean2006 = treeCanopyCoverMean2005.add(yearly_difference2005_10).float();
+var treeCanopyCoverMean2007 = treeCanopyCoverMean2006.add(yearly_difference2005_10).float();
+var treeCanopyCoverMean2008 = treeCanopyCoverMean2007.add(yearly_difference2005_10).float();
+var treeCanopyCoverMean2009 = treeCanopyCoverMean2008.add(yearly_difference2005_10).float();
+var treeCanopyCoverMean2011 = treeCanopyCoverMean2010.add(yearly_difference2010_15).float();
+var treeCanopyCoverMean2012 = treeCanopyCoverMean2011.add(yearly_difference2010_15).float();
+var treeCanopyCoverMean2013 = treeCanopyCoverMean2012.add(yearly_difference2010_15).float();
+var treeCanopyCoverMean2014 = treeCanopyCoverMean2013.add(yearly_difference2010_15).float();
+
+var collection = ee.ImageCollection.fromImages([treeCanopyCoverMean2000, treeCanopyCoverMean2001, treeCanopyCoverMean2002, treeCanopyCoverMean2003, treeCanopyCoverMean2004, treeCanopyCoverMean2005, treeCanopyCoverMean2006, treeCanopyCoverMean2007, treeCanopyCoverMean2008, treeCanopyCoverMean2009, treeCanopyCoverMean2010, treeCanopyCoverMean2011, treeCanopyCoverMean2012, treeCanopyCoverMean2013, treeCanopyCoverMean2014, treeCanopyCoverMean2015]);
+var collection_list =collection.toList(collection.size()); 
+var size = collection_list.size().getInfo();
+print(size);
+var i;
+for (i = 0; i < size; i++) {
+  var image = ee.Image(collection_list.get(i));
+  Map.addLayer(image, treeCanopyCoverVis, 'year' + i, false);
+}
+
+var i;
+for (i = 0; i < size; i++) {
+  var image = ee.Image(collection_list.get(i));
+
+
+// Reclassify values (for all 16 layers). Create 3 variables: for each TreeCoverMultiplier curves
+var reclassifiedForest0025 = image.expression('b(0) == 0 ? 1 : b(0) <= 5 ? 0.75 : b(0) <= 10 ? 0.57 : b(0) <= 20 ? 0.32 : b(0) <= 40 ? 0.10 : b(0) <= 60 ? 0.03 : 0.00');
+
+var reclassifiedForestMedian = image.expression('b(0) == 0 ? 1 : b(0) <= 5 ? 0.80 : b(0) <= 10 ? 0.64 : b(0) <= 20 ? 0.41 : b(0) <= 40 ? 0.17 : b(0) <= 60 ? 0.07 : 0.01');
+
+var reclassifiedForest095 = image.expression('b(0) == 0 ? 1 : b(0) <= 5 ? 0.83 : b(0) <= 10 ? 0.68 : b(0) <= 20 ? 0.47 : b(0) <= 40 ? 0.22 : b(0) <= 60 ? 0.10 : 0.02');
+
+
+// Reproject to MODIS projection       EDIT done for all 3 variables defined above
+var forest0025 = reclassifiedForest0025
+      // Request the data at the scale and projection of the MODIS image.
+    .reproject({
+      crs: modisProjection, // defined earier
+      scale: 500
+    })
+    // Force the next reprojection to aggregate instead of resampling.
+    .reduceResolution({ // 
+      reducer: ee.Reducer.mean(),
+      maxPixels: 1024,
+      bestEffort:true
+    });
+
+forest0025 = forest0025.clip(bounds); // defined earlier
+// mask: ForestCover only for areas where MCD equals savannas, woody savannas or grasslands
+var maskedFor0025 = forest0025.updateMask(mask);
+//Map.addLayer(maskedFor, {}, 'forestMean year' + i);
+
+
+
+// Median
+var forestMedian = reclassifiedForestMedian
+    .reproject({
+      crs: modisProjection, 
+      scale: 500
+    })
+    .reduceResolution({ 
+      reducer: ee.Reducer.mean(),
+      maxPixels: 1024,
+      bestEffort:true
+    });
+
+forestMedian = forestMedian.clip(bounds); 
+var maskedForMedian = forestMedian.updateMask(mask);
+
+
+
+// 095
+var forest095 = reclassifiedForest095
+    .reproject({
+      crs: modisProjection, 
+      scale: 500
+    })
+    .reduceResolution({ 
+      reducer: ee.Reducer.mean(),
+      maxPixels: 1024,
+      bestEffort:true
+    });
+
+forest095 = forest095.clip(bounds); 
+var maskedFor095 = forest095.updateMask(mask);
+
+
+// stack
+var stacked = maskedFor0025.addBands(maskedForMedian); // layers to be exported. 
+var all_three_forest_layers = stacked.addBands(maskedFor095); 
+
+
+// Export:
+Export.image.toDrive({
+  image: all_three_forest_layers.toFloat(), 
+  description: "Forest_year"  + i,
+  scale: 500,
+  folder: 'GEE_Forest',
+  region: bounds,
+  maxPixels:1e13
+});
+}

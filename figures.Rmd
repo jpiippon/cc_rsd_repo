@@ -1,0 +1,871 @@
+---
+title: "Figures"
+author: "Johannes"
+date: "Jan 2022"
+output: html_document
+---
+
+
+# Introduction
+
+Here we plot figures for the main text. However, country-specific figures created in the file
+extract_countries.Rmd 
+and areas for different figure classes calculated in the file
+areas_for_fig_classes.Rmd
+
+Figures are further modified in adobe illustrator. Note that aboveground biomass abbreviated here as AB instead of AGB. 
+
+The files needed in the analysis should be used in following order:
+1) creating_TreeCoverMultiplier.Rmd
+2) GEE_codes.txt
+3) rast_processing_res000449.Rmd
+4) simulation.Rmd
+5) cc_trend_with_linear_regression.Rmd
+6) figures.Rmd
+7) extract_countries.Rmd
+8) gather_isimip_data.Rmd
+9) simulate_isimip_agb.Rmd
+10) gather_glw_aw_for_figure_S4.Rmd
+11) areas_for_fig_classes.Rmd
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+
+```{r include = FALSE}
+packages <- c("tidyverse", "raster",
+               "gdalUtils", "scico", "tmap",
+               "tmaptools", "sf", "terra",
+               "here","easypackages")
+
+packages <- c("tidyverse", "raster","gdalUtils", "scico","tmap", "tmaptools",
+              "sf", "terra", ,"here", "rmapshaper",
+              "data.table", "broom", "Rfast", "matrixStats",
+              "easypackages")
+
+not_installed <- packages[!(packages %in% installed.packages()[,"Package"])]
+if(length(not_installed)){install.packages(not_installed)}
+library(easypackages) # loads all the libraries
+libraries(packages)
+
+# or
+# library(tidyverse); library(raster); library(gdalUtils); library(scico); library(tmap); library(tmaptools); library(sf); library(terra); library(here); library(rmapshaper)
+# library(data.table); library(broom); library(Rfast); library(matrixStats)
+timestep <- 2001:2015
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+
+# options, mainly for terra package
+terraOptions(tempdir= here("Temp_R"))
+terraOptions()
+rasterOptions(tmpdir= here("Temp_R"))
+rasterOptions()
+```
+
+# Prepare data for the figures
+## Data
+
+```{r}
+# data from simulation.Rmd (assessed for the uncertanties)
+sim_df <- here("Data", "Output", "simulation_results_n1000.csv") %>% # 
+  fread()
+names(sim_df)
+
+
+
+
+
+## select data and convert to raster (and change neg to na)
+# abovegroun biomass ab
+ab_med <- sim_df %>% 
+  dplyr::select(x,y,contains("ab_med")) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() # defined in the simulation that ab => 0.1
+
+# carrying capacity cc 
+cc_med <- sim_df %>% 
+  dplyr::select(x,y,contains("cc_med")) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() # ab => 0.1
+
+# relative stocking density rsd
+rsd_med <- sim_df %>% 
+  dplyr::select(x,y,contains("rsd_med_")) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() # ab => 0.1
+
+
+
+
+
+
+#5y med for AB and CC and RSD
+# We calculate this as follows: first take medians for every year 2008,2009,2010,2011 and 2012 then take or median of those. 
+ab_med_vars <- sim_df %>%  
+  dplyr::select(ab_med_2008,ab_med_2009,ab_med_2010, ab_med_2011,ab_med_2012) 
+
+ab_5y_med <- ab_med_vars %>% 
+  mutate(ab_med_median = rowMedians(as.matrix(ab_med_vars),na.rm = TRUE)) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, ab_med_median) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+#writeRaster(ab_5y_med, filename = here("Data", "Output", "AGB_5y_med_simulated_5arcmin.tif"))
+
+
+#cc 5y med -->  needed for creating classes for ab cc plot, also later for country-specific results
+cc_med_vars <- sim_df %>%  
+  dplyr::select(cc_med_2008,cc_med_2009,cc_med_2010, cc_med_2011,cc_med_2012) 
+
+cc_5y_med <- cc_med_vars %>% 
+  mutate(cc_med_median = rowMedians(as.matrix(cc_med_vars),na.rm = TRUE)) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, cc_med_median) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+  ## save
+#writeRaster(cc_5y_med, filename = here("Data", "Output", "CC_5y_med_simulated_5arcmin.tif"))
+
+
+# Calculate this similarly as ab: first medians for every year, then median of those again
+rsd_med_vars <- sim_df %>%  
+  dplyr::select(rsd_med_2008,rsd_med_2009,rsd_med_2010,rsd_med_2011,rsd_med_2012) 
+
+
+rsd_5y_med <- rsd_med_vars %>% 
+  mutate(rsd_med_median = rowMedians(as.matrix(rsd_med_vars),na.rm = TRUE)) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, rsd_med_median) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+
+
+
+
+
+
+
+
+## CV AB and CC --> take median of CVs calculated every year 2008-2012
+#¤ ! CV for CC completely similar
+ab_cv_vars <- sim_df %>%  
+  dplyr::select(ab_cv_2008,ab_cv_2009,ab_cv_2010, ab_cv_2011,ab_cv_2012) 
+
+ab_cv <- ab_cv_vars %>% 
+  mutate(ab_cv_average = rowMedians(as.matrix(ab_cv_vars),na.rm = TRUE)) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, ab_cv_average) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+
+
+## CV RSD 
+rsd_cv_vars <- sim_df %>%  
+  dplyr::select(rsd_cv_2008,rsd_cv_2009,rsd_cv_2010,rsd_cv_2011,rsd_cv_2012) 
+
+rsd_cv <- rsd_cv_vars %>% 
+  mutate(rsd_cv_average = rowMedians(as.matrix(rsd_cv_vars),
+                                     na.rm = TRUE)) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, rsd_cv_average) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+
+
+
+
+
+
+
+
+# Interannual variability  --> could be calculated while simulating as well
+ ## (using Rfast package)
+ab_iv <- sim_df %>%
+  dplyr::select(contains("ab_med")) %>%
+  mutate(iv_ab = 100* as.matrix(.) %>% rowcvs()) %>%
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  # get the coordinates
+  dplyr::select(x,y, iv_ab) %>%
+  rasterFromXYZ(., crs = epsg4326) %>%
+  rast()
+ ## for CC 
+cc_iv <- sim_df %>%
+  dplyr::select(contains("cc_med")) %>%
+  mutate(iv_cc = 100* as.matrix(.) %>% rowcvs()) %>%
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  # get the coordinates
+  dplyr::select(x,y, iv_cc) %>%
+  rasterFromXYZ(., crs = epsg4326) %>%
+  rast()
+
+
+
+
+
+## min to median ratio 
+### min_to_med ab
+ab_vars <- sim_df %>% dplyr::select(contains("ab_med"))
+
+ab_min_to_med <- ab_vars %>% 
+  mutate(ab_min_to_med =
+           rowMins(as.matrix(ab_vars), value = TRUE) /
+           rowMedians(as.matrix(ab_vars),na.rm = TRUE) ) %>% 
+   bind_cols(sim_df %>% dplyr::select(x,y)) %>%  
+   dplyr::select(x,y, ab_min_to_med) %>% 
+   rasterFromXYZ(., crs = epsg4326) %>% 
+   rast()
+
+ab_min_to_med %>% plot()
+
+
+### min_to_med cc 
+cc_vars <- sim_df %>% dplyr::select(contains("cc_med"))
+
+cc_min_to_med <- cc_vars %>% 
+  mutate(cc_min = rowMins(as.matrix(cc_vars), value = TRUE),
+         cc_med = rowMedians(as.matrix(cc_vars),na.rm = TRUE),
+         cc_min_to_med = cc_min / cc_med) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  # get the coordinates
+  dplyr::select(x,y,cc_min_to_med) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast()
+
+cc_min_to_med %>% plot
+
+
+### max rsd pixels (same as RSD for min cc pixels)
+rsd_vars <- sim_df %>% dplyr::select(contains("rsd_med"))
+
+rsd_max <-rsd_vars %>% 
+  mutate(rsd_max = rowMaxs(as.matrix(rsd_vars), value = TRUE)) %>% # max rsd over 2001-2015
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  # get the coordinates
+  dplyr::select(x,y,rsd_max) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast()
+
+
+
+
+
+# number of years RSD is overstocked
+rsd_med_recoded <- sim_df %>% 
+  dplyr::select(contains("rsd_med_")) %>% 
+  mutate(across(.cols = everything(),
+                ~ if_else(.x < 0.65,  true = 0, false = 1)))#change rows that area below 0.65 to zeros
+
+rsd_years_overstocked <- rsd_med_recoded %>% 
+  mutate(yrs_overstocked = rowSums2(as.matrix(rsd_med_recoded),
+                                    na.rm = TRUE) ) %>% # rowsums give number of years rsd is 1 1 1 (meaning overgrazed) 
+  mutate(yrs_overstocked_percent = 100 *yrs_overstocked/length(timestep) ) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>% 
+  dplyr::select(x,y, yrs_overstocked_percent) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast()
+
+qtm(rsd_years_overstocked)
+```
+
+# Grassland area in 5arcmin cells
+
+Aggregate and resample mcd 01 data into 5arcmin. This express a fraction of grassland that exist in each 5arcmin cell
+
+```{r}
+
+# !!! uncomment these lines
+# mcd <- here("Data", "Output", "mcd_mode_0_or_1_res000449.tif") %>%
+#   rast()
+# 
+# mcd_01_5arcmin <- crop(mcd, cc_med) %>%
+#   aggregate(., fact = 18, na.rm = T) %>%
+#   resample(., cc_med,
+#            filename = here("Data", "Output", "mcd_fraction_of_grassland_in_cell_5arcmin.tif"), 
+#            overwrite = T)
+
+
+# get the data
+mcd_01_5arcmin <- 
+  here("Data", "Output", "mcd_fraction_of_grassland_in_cell_5arcmin.tif") %>% 
+  rast()
+plot(mcd_01_5arcmin) # 0 to 100% of grassland
+
+```
+
+
+
+
+
+# Get carrying capacity (CC) trend
+
+Trend calculated with linear regression in the file cc_trend_with_linear_regression.Rmd
+
+```{r include = FALSE}
+
+cc_trend <- here("Data", "Output", "lm_rast_5arcmin.tif") %>% rast()
+
+# remove insignificant values
+cc_trend[cc_trend$p.value > 0.05] <- NA
+
+cc_trend %>% plot()
+qtm(cc_trend$estimate)
+
+```
+
+
+
+## Regions and extract
+
+```{r}
+# region data
+reg <- here("Data", "Input", "reg_mollw.gpkg") %>%  st_read()
+reg_wgs84 <- st_transform(reg,4326) 
+
+reg_wgs84 <- reg_wgs84 %>% 
+   mutate(subregion = c("Australia and Oceania", "Central America",
+                          "East Asia", "Eastern Europe and Central Asia",
+                          "Ice", "South Asia", "South America", "Middle East",
+                          "Sub-Saharan Africa", "North Africa", "North America",
+                          "Southeast Asia", "Western Europe")) %>% 
+  filter(subregion != "Ice")  # remove Ice
+
+# simplify reg_wgs84 for plotting
+reg_wgs84_simple <- ms_simplify(reg_wgs84)
+
+# change to terra based vect
+reg_wgs84_vect <- vect(as(reg_wgs84, "Spatial")) # 
+
+
+# extract CC to subregions - weighted average
+# we want to give weight to the cells depending on how much grassland area they contain. 
+#Original data just 0 = no grassland, 1 = grassland. Thus, aggregated 5arcmin mcd data tells what is the fraction of grassland in each cell.
+#weighted average
+# first numerator = sum of CC * weights (fraction of grassland area in range [0,1])
+cc_regional_numerator <- 
+    extract(x = (cc_med * mcd_01_5arcmin),
+          y = reg_wgs84_vect,
+          fun= sum, na.rm = TRUE, df = TRUE) 
+
+# then denominator = weights summed over subregion
+cc_regional_denominator <-
+  extract(x = mcd_01_5arcmin,
+          y = reg_wgs84_vect,
+          fun= sum, na.rm = TRUE, df = TRUE)   
+
+# join data frames
+cc_regional <-
+  left_join(cc_regional_numerator, cc_regional_denominator, by = "ID")
+
+# divide cc cols by sum_of_weights
+cc_regional <- cc_regional %>% 
+  mutate(across(everything()), . / mcd) %>% # name mcd here comes when extracting the denominator
+  mutate(subregion = reg_wgs84$subregion) %>% 
+  dplyr::select(-ID,-mcd)
+
+```
+
+
+
+
+# Change to the Robinson projection  for figures 
+
+Possible to modify so that projection done only when plotting, but then plotting takes a lot of time.
+On the other hand, this does take a lot of RAM.
+
+```{r}
+# change to the Robinson projection
+# ab_rob <- project(ab_med, "+proj=robin", mask = TRUE) #2min for all layers
+# cc_rob <- project(cc_med, "+proj=robin", mask = TRUE)
+# rsd_rob <-project(rsd_med, "+proj=robin", mask = TRUE)
+
+# ab and cc and rsd 5y medians
+ab_5y_rob <- project(ab_5y_med, "+proj=robin", mask = TRUE) # mask not necessarily needed
+cc_5y_rob <- project(cc_5y_med, "+proj=robin", mask = TRUE)
+rsd_5y_rob <- project(rsd_5y_med, "+proj=robin", mask = TRUE)
+
+
+# CVs in % --> separate CVs calculated for 2008, 2009.. 2012 and then we took the median
+ab_cv_rob <- 100*project(ab_cv, "+proj=robin", mask = TRUE)
+#cc_cv_rob <- 100*project(cc_cv, "+proj=robin", mask = TRUE)
+rsd_cv_rob <-100*project(rsd_cv, "+proj=robin", mask = TRUE)
+
+# interannual variability in %
+ab_iv_rob <- project(ab_iv, "+proj=robin", mask = TRUE)
+cc_iv_rob <- project(cc_iv, "+proj=robin", mask = TRUE)
+
+# min_to_med ratio and RSD max
+ab_min_to_med_rob <- 100* project(ab_min_to_med, "+proj=robin", mask = TRUE)
+cc_min_to_med_rob <- 100* project(cc_min_to_med, "+proj=robin", mask = TRUE)
+rsd_max_rob <- project(rsd_max, "+proj=robin", mask = TRUE)
+
+# years overstocked
+rsd_years_overstocked_rob <- project(rsd_years_overstocked, "+proj=robin", mask = TRUE)
+
+# lm based trend for whole study period. CC inc/dec this many AU during 2001-2015
+cc_trend_rob <- project(cc_trend$estimate*15 , "+proj=robin", mask = TRUE) 
+```
+
+
+# Function for tmap plotting
+
+```{r}
+# Draw a map index 
+# @param r_index: a raster to be plotted
+# @param index_label: label that will be placed as the legend title
+# @param colorpal: color palette to be used, ordered from low to high value
+# @param breakvals: break values to be drawn in legend
+# @param color_midpoint: TRUE if the color scale has a midpoint, NULL by default (no midpoint in color scale)
+# @param tocrs: proj4 string of CRS to which the raster is projected if given (by default, no projection is done)
+# @return tmap object of the index given
+create_index_map <- function(r_index, index_label,index_main_title,
+                             colorpal, breakvals,
+                             breaknames = NULL,
+                             color_midpoint = NULL, tocrs = NA){
+
+  # project to another crs
+  if (!is.na(tocrs)){
+    r_index <- project(r_index, tocrs, mask = TRUE)
+  }
+
+  # create tmap object
+  index_map <- tm_shape(r_index) + # possible to add projection = "+proj=robin" (but slow)
+    tm_raster(#style = "cont", # draw gradient instead of classified
+              palette = colorpal,
+              breaks = breakvals,
+              labels = breaknames,
+              title = index_label,
+              midpoint = color_midpoint,
+              legend.reverse = TRUE) +
+    tm_layout(main.title = index_main_title,
+              main.title.position = "left",
+              main.title.size = 1,
+              legend.bg.color = TRUE,
+              legend.outside = TRUE,
+              frame = FALSE)+
+    tm_shape(reg_wgs84_simple) +
+    tm_borders(col = "grey30", lwd = 0.33) 
+  
+  return (index_map)
+  
+} #tmaptools::palette_explorer()
+```
+
+
+
+
+# Plot Figure 2a-2d (AB and CC in same figure)
+
+CC = AB / intake_forage. Thus intake_forage = AB/CC and we find median of simulated estimates of animal forage consumption. This can be used to place AB and CC values into the same figure as AB = CC * constant (constant is the intake_forage)
+
+```{r}
+global((ab_5y_med) / cc_5y_med, fun = "mean", na.rm = TRUE) # intake 4870kg, depends on the sim
+# hist(ab_5y_med/1e3);hist(cc_5y_med) # ;hist(cc_5y_med*4.817)
+#animals eat 4817kg per year. Thus CC values that represent AB values are # c(0-5, 5-10, 10-21, 21-42, 42-83)
+# check CC histogram and compare to those values
+
+
+# color palettes
+pal_cc <- scico(n = 6, palette = "bamako", direction = -1)
+pal_cv <-  scico(n = 6, palette = "nuuk", direction = -1)
+pal_min_to_med <-  scico(n = 3, palette = "hawaii", begin = 0.1, end = 0.8)
+pal_trend <- scico(n = 6, palette = "roma")
+
+# Aboveground biomass (AB) and carrying capacity (CC) between 2008 and 2012
+(plt_abcc_5y <- 
+  create_index_map(r_index = ab_5y_rob/1e3, # divide to get correct unit, was kg biomass per km2 and we convert to gram per m2
+                   index_main_title = "Median aboveground biomass (AGB) and\n carrying capacity (CC) over 2008-2012",
+                   index_label = "AB g/m2/yr",
+                   colorpal = pal_cc, #pal_ab,
+                   breakvals =  c(-Inf,25,50,100,200,400, Inf),
+                   breaknames = c(
+                     "< 25 (22% of total area)",
+                     "25-50 (12% of total area)",
+                     "50-100 (20% of total area)",
+                     "100-200 (20% of total area)",
+                     "200-400 (20% of total area)",
+                     "> 400 (6% of total area)")) )
+#22 + 12 +20 +20 +20+ 6
+
+
+
+
+# Trend. Multiplied by number of years to get values in meaningful unit: during 15y period, CC increases/decreases xx animal unit
+(plt_abcc_trend <-
+  create_index_map(r_index = cc_trend_rob, 
+                   index_main_title = "Statistically significant change in CC over 2001-2015 [Animal units (AU)/km2/15yrs]",
+                  index_label = "AU",
+                   colorpal = pal_trend,
+                   breakvals = c(-Inf,-20,-5,0,5,20,Inf),
+                   breaknames = c("< -20 (8% of total area)",
+                                  "-20, -5 (13% of total area)",
+                                  "-5, 0 (6% of total area)",
+                                  "0, 5 (4% of total area)",
+                                  "5, 20 (6% of total area)",
+                                   "> 20 (5% of total area)"),
+                   color_midpoint = 0))
+#8 + 13 + 6 + 4 + 6 + 5  # and the no significant trend covers the rest, 58%
+
+
+
+
+# Interannual variability in AB and CC
+(plt_abcc_iv <- 
+  create_index_map(r_index = ab_iv_rob ,
+                   index_main_title = "Interannual variability in AGB and CC over 2001-215 [%]",
+                   index_label = "IV in %",
+                   colorpal = pal_cv,
+                   breakvals = c(0,5,10,20,30,40,Inf),
+                   breaknames = c("< 5 (1% of total area)",
+                                  "5-10 (14% of total area)",
+                                  "10-20 (44% of total area)",
+                                  "20-30 (24% of total area)",
+                                  "30-40 (8% of total area)",
+                                  "> 40 (9% of total area)"))) 
+# 1 + 14 + 44 + 24 + 8 + 9
+
+
+
+# Minimum to median ratio for AB and CC
+(plt_abcc_min_to_med <- 
+  create_index_map(r_index = ab_min_to_med_rob ,
+                   index_main_title = "Minimum to median ratio for AB and CC",
+                   index_label = "Ratio in %",
+                   colorpal = pal_min_to_med,
+                   breakvals = c(0, 10, 20, 40, 60, 80, 100),
+                   breaknames = c("0-10 (2% of total area)",
+                                  "10-20 (3% of total area)",
+                                  "20-40 (5% of total area)",
+                                  "40-60 (14% of total area)",
+                                  "60-80 (47% of total area)",
+                                  "80-100 (29% of total area)"))) 
+
+#2 + 3 + 5 + 14 + 47 + 29
+
+
+
+
+
+## arrange plots
+plt_fig2 <- tmap_arrange(
+  plt_abcc_5y,
+  plt_abcc_trend,
+  plt_abcc_iv,
+  plt_abcc_min_to_med,
+  ncol = 2)
+
+plt_fig2
+
+tmap_save(plt_fig2, here("Figures", "Figure2.pdf"))
+```
+
+
+
+
+# Plot Figure 3a (Regional CC line graph)
+
+Trend significances added (calculated later in this srcipt) in adobe illustrator
+Tile 3b calculated in the file
+extract_figures.Rmd
+
+
+```{r}
+# CC long
+cc_reg_long <- cc_regional %>% 
+  pivot_longer(cols = cc_med_2001:cc_med_2015,
+               names_to = "year",
+               names_prefix = "cc_med_",
+               values_to = "AU_km2" )
+
+
+
+# plot CC
+(p_cc_reg <- cc_reg_long %>% 
+  ggplot(., aes(x = year,
+                y = AU_km2,
+                colour = subregion, group = subregion)) +
+  geom_line(size = 0.5) +
+ # geom_point(aes(color = subregion))+
+    
+  ggtitle("Regional Carrying Capacity (CC)")+
+    
+  # Add labels at the end of the line
+  geom_text(data = filter(cc_reg_long, year == "2015"),
+            aes(label = subregion),
+            hjust = 0, nudge_x = 0.1) +
+    
+  # Allow labels to bleed past the canvas boundaries
+  coord_cartesian(clip = 'off') +
+    
+  # Remove legend & adjust margins to give more space for labels
+  theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        panel.background = element_rect(fill = "white"),
+        axis.text.x = element_text(angle = 40, hjust = 1),
+        legend.position = 'none',
+        plot.margin = margin(0.1, 5.6, 0.1, 0.1, "cm")) )
+   
+
+
+p_cc_reg
+
+#ggsave(filename = here("Figures", "Figure3a.pdf"),
+ #               plot = p_cc_reg)
+
+```
+
+
+
+
+
+# Plot Figure 4: RSD
+
+
+```{r}
+pal_rsd <- scico(n = 3, palette = "lajolla")
+
+# rsd calculated based on simualated median of cc2008-cc2012
+(plt_rsd_med5 <- 
+  create_index_map(r_index = rsd_5y_rob,
+                   index_main_title = "Relative stocking density (RSD) based on median carrying capacity (CC) over 2008-2012 [%]",
+                   index_label = "RSD in %",
+                   colorpal = pal_rsd,
+                   breakvals = c(-Inf, 0.2, 0.65, Inf),
+                   breaknames = c("<20%, low pressure (42% of total area)",
+                                  "20-65%, medium pressure (28% of total area)",
+                                  ">65%, overstocked (30% of total area)")))
+# 42 + 28 + 30
+
+
+
+# RSD calculated with min CC values (for every pixel, we calculated min CC)
+# this is the same as max simulated RSD values 
+(plt_rsd_max <- 
+  create_index_map(r_index = rsd_max_rob,
+                   index_main_title = "RSD based on minimum CC values over 2001-2015 [%]",
+                   index_label = "RSD in %",
+                   colorpal = pal_rsd,
+                   breakvals = c(-Inf, 0.2, 0.65, Inf),
+                   breaknames = c("<20%, low pressure (35% of total area)",
+                                  "20-65%, medium pressure (26% of total area)",
+                                  ">65%, overstocked (39% of total area)")))
+
+# 35 + 26 + 39
+
+
+
+# years when RSD in the class overstocked  #palette_explorer()  alternatives
+pal_rsd_years_overst <- scico(n = 6, palette = "hawaii", begin = 0.2,end = 0.7,
+                              direction = -1)
+
+
+(plt_rsd_years_overstocked <- 
+  create_index_map(r_index = rsd_years_overstocked_rob,
+                   index_main_title = "Share of years 2001-2015 when RSD is in the class overstocked [%]",
+                   index_label = "%",
+                   colorpal = pal_rsd_years_overst,
+                   breakvals =  c(-Inf,0.0001,20, 40, 60, 80, 100),
+                   breaknames = c("0 (62% of total area)",
+                                  "0-20 (5% of total area)",
+                                  "20-40 (3% of total area)",
+                                  "40-60 (3% of total area)",
+                                  "60-80 (3% of total area)",
+                                  "80-100 (24% of total area)") ))
+
+#62 + 5 + 3 + 3 + 3+ 24
+
+
+## arrange plots
+plt_rsd <- tmap_arrange(
+  plt_rsd_med5,
+  plt_rsd_max,
+  plt_rsd_years_overstocked,
+  ncol = 2)
+
+plt_rsd
+
+
+tmap_save(plt_rsd, here("Figures", "Figure4.pdf"))
+
+```
+
+
+# Figure 5 plotted in the file extract_countries.Rmd
+# Livestock-only grasslands, Figure 6
+
+
+Unfortunately, we cannot share data that divides grasslands to livestock-grazing grasslands. However, the documentation can be found from Robinson et al (2011) and data asked from authors. Here we use classes
+LGY (Livestock only, hyper-arid),
+LGA (Livestock only, arid and semi-arid),
+LGH (Livestock only, humid and sub-humid) and 
+LGT (Livestock only, temperate and tropical highland) 
+to separate livestock-only systems from mixed (or industrial) production systems. Same as classes 1-4
+
+The glp version used is Ruminant_prod_systemsv5
+
+```{r}
+mypath <- "" # change
+glp <- rast(paste0(mypath, "GLP/GLP/Ruminat_prod_systemsv5/ruminant_production_systems.tif"))
+
+plot(glp)
+# we need only classes 1-4
+glp[glp>4] <- NA ; plot(glp)
+# change all values to 1
+glp[glp>1] <- 1; plot(glp)
+
+
+# aggregare to 5arcsec, crop and mask to our study area
+glp_5as <- aggregate(glp, fact =  10, na.rm = TRUE) %>% 
+  crop(., ab_med$ab_med_2010) %>% 
+  mask(., ab_med$ab_med_2010)
+
+plot(glp);plot(glp_5as);plot(ab_med$ab_med_2010)
+
+# mask CC and RSD to livestock-only grasslands and plot
+# glp denotes global livestock production systems
+cc_5y_glp <- cc_5y_med %>% 
+  mask(., glp_5as)
+
+rsd_5y_glp<- rsd_5y_med %>% 
+  mask(., glp_5as)
+
+
+# change to rob proj 
+cc_5y_rob_glp <- project(cc_5y_glp, "+proj=robin", mask = TRUE)
+rsd_5y_rob_glp <- project(rsd_5y_glp, "+proj=robin", mask = TRUE)
+
+
+# cc_livestock_only
+plot(cc_5y_rob_glp)
+(plt_cc_5y_glp <- 
+  create_index_map(r_index = cc_5y_rob_glp,
+                   index_main_title = "Median carrying capacity (CC) over 2008-2012 on the livestock-grazing grasslands",
+                   index_label = "CC AU/km2/yr",
+                   colorpal = pal_cc,
+                   breakvals =  c(0,5,10,21,42,83,Inf),
+                   breaknames = c("< 5 (24% of total area)",
+                                  "5-10 (12% of total area)",
+                                  "10-21 (19% of total area)",
+                                  "21-42 (18% of total area)",
+                                  "42-83 (21% of total area)",
+                                  "> 83 (6% of total area)"))) 
+# 24 + 12 + 19 + 18 + 21 + 6
+
+
+# rsd_livestock_only
+(plt_rsd_med5_glp <- 
+  create_index_map(r_index = rsd_5y_rob_glp,
+                   index_main_title = "Relative stocking density (RSD) based on median carrying capacity (CC) over 2008-2012 on the livestock-grazing grasslands",
+                   index_label = "RSD in %",
+                   colorpal = pal_rsd,
+                   breakvals = c(-Inf, 0.2, 0.65, Inf),
+                   breaknames = 
+                     c("<20%, low pressure (47% of total area)",
+                       "20-65%, medium pressure (29% of total area)",
+                       ">65%, overstocked (24% of total area)")))
+# 47 + 29 + 24
+
+## arrange plots
+(plt_livestock_only <- tmap_arrange(
+  plt_cc_5y_glp,
+  plt_rsd_med5_glp,
+  ncol = 1))
+
+tmap_save(plt_livestock_only, here("Figures", "Figure6.pdf"))
+```
+
+
+# Plot Figure 7: uncertainty measured with coefficient of variation (CV) 
+
+```{r}
+pal_cv <-  scico(n = 6, palette = "nuuk", direction = -1)
+
+# ab_cv_rob %>% hist(breaks = 40, xlim = c(15,40), main = "agb_cc_cv")
+# rsd_cv_rob%>% hist(breaks = 500, xlim = c(10,70), main = "rsd_cv")
+
+
+# AGB and CC CV
+(plt_ab_cv<-
+  create_index_map(r_index = ab_cv_rob ,
+                   index_main_title = "Uncertainty related to aboveground biomass (AGB) and carrying capacity (CC)\n measured with coefficient of variation (CV)",
+                   index_label = "CV in %",
+                   colorpal = pal_cv,
+                   breakvals = c(15,20,25,30,35,40,Inf),
+                   breaknames = c("15-20 (60% of total area)",
+                                  "20-25 (20% of total area)",
+                                  "25-30 (13% of total area)",
+                                  "30-35 (5% of total area)",
+                                  "35-40 (1% of total area)",
+                                  "> 40 (1% of total area)") ))
+# 60 + 20+ 13 + 5+ 1 + 1
+
+
+# RSD CV
+(plt_rsd_cv <-
+  create_index_map(r_index = rsd_cv_rob ,
+                   index_main_title = "Uncertainty related to relative stocking density (RSD)\n measured with coefficient of variation (CV)",
+                   index_label = "CV in %",
+                   colorpal = pal_cv,
+                   breakvals = c(15,20,25,30,35,40,Inf),
+                   breaknames = c("15-20 (3% of total area)",
+                                  "20-25 (21% of total area)",
+                                  "25-30 (38% of total area)",
+                                  "30-35 (23% of total area)",
+                                  "35-40 (10% of total area)",
+                                  "> 40 (5% of total area)") ))
+
+# 3 +21 + 38 + 23+ 10 + 5
+
+
+## arrange plots
+plt_cv <- tmap_arrange(
+  plt_ab_cv,
+  plt_rsd_cv,
+  ncol = 1)
+
+plt_cv
+
+
+# save
+tmap_save(plt_cv, here("Figures", "Figure7.pdf"))
+```
+
+
+
+
+
+
+
+
+# Significances of regional CC trends (Figure 3a) based on Kendalls tau
+
+These could be calculated more elegantly as done for individual countries in the file
+extract_countries.Rmd
+---> significances added to line graph in adobe illustrator
+
+```{r}
+f_cortest_region <- function(name_subregion) {
+  cor.test(1:length(timestep), # x value for the test
+           cc_regional %>%
+             filter(subregion == paste0(name_subregion)) %>% 
+             dplyr::select( -subregion) %>% 
+             unlist(), # y value
+           method = "kendall")
+}
+
+f_cortest_region("Australia and Oceania") # -0.18, pval 0.38
+f_cortest_region("South America") # -0.10, pval 0.63
+f_cortest_region("Middle East") # -0.22 pval 0.28
+f_cortest_region("Sub-Saharan Africa") #0.01 pval 1
+f_cortest_region("North America") #-0.30 pval 0.14
+f_cortest_region("North Africa") # 0.52 pval 0.006 ***
+f_cortest_region("South Asia") # -0.64 pval 0.0005 ***
+f_cortest_region("Central America") # -0.60 pval 0.001 ***
+f_cortest_region("East Asia") # -0.31 pval 0.11
+f_cortest_region("Eastern Europe and Central Asia") # -0.49 pval 0.011 **
+f_cortest_region("Southeast Asia") # -0.62 pval 0.001 ***
+f_cortest_region("Western Europe") # -0.77 pval 0.00001 ***
+
+```
+
+
+
+
+

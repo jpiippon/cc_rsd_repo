@@ -1,0 +1,749 @@
+---
+title: "Countries AGB, CC and RSD"
+author: "Johannes Piipponen"
+date: "26 01 2022"
+output: html_document
+---
+
+
+# Introduction 
+
+In this document we do calculations for individual countries. These will be presented both in the main text but also in the Appendix.
+
+1) total grassland area per country
+2) total AGB per country 
+3) total CC per country
+4) how many % of the grassland area is being overgrazed (per country)
+5) how many % the grassland area is from the total area of country
+6) median RSD per country
+7) changes in grassland extent in selected countries
+8) total AGB estimates (restricted, unrestricted, ISIMIP based) for Figure S5
+
+
+
+# Get data
+
+Packages, sim_df, cc_med and rsd_5y_med data loaded in the file 
+figures.Rmd 
+Polygons from:
+https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/
+
+
+*polygons*
+```{r}
+adm_10m <- here("Data", "Input", "ne_10m_admin_0_countries.shp") %>% 
+ read_sf()
+
+library(rmapshaper); library(broom) # other packages from Figures.Rmd
+# select only variables needed 
+adm_10m <- adm_10m %>% 
+  filter(!ADMIN %in% c("Antarctica", "Greenland")) %>% 
+  mutate(ID = 1:nrow(.)) %>% 
+    dplyr::select(ID, SOVEREIGNT, ADMIN) # do not simplify before extracting
+
+
+# selected countries (countriesthat  Wolf et al used)
+mycountries_list <- c("Argentina", "Brazil", "Canada", "Chile", "China", "India", "Kazakhstan", "Mexico", "Russia", "United States of America")
+
+# polygons for selected countries --> use ADMIN for selected countries
+mycountries <- subset(adm_10m, adm_10m$ADMIN %in% mycountries_list)
+# all countries
+countries_list <- adm_10m$ADMIN
+
+# convert to vect --> needed when extracting values
+mycountries_extract_polygons <- mycountries %>% 
+  as("Spatial") %>%
+  vect()
+
+extract_polygons <- adm_10m %>%
+  as("Spatial") %>%
+  vect() 
+ ## add total area of polygons to adm_10m
+adm_10m$country_total_area_sqkm <-  expanse(extract_polygons, unit = "km")
+
+```
+
+
+
+# 1-5
+
+Althought our maps (resolution 5 arcmin) cover a large fraction of the globe, the total area is smaller in reality. This results in aggregation. Therefore, we need information about the "real" grassland area each of the cells in our 5armin map contains. In other words, aboveground biomass (AGB) and carrying capacity (CC) are density variables and we must calculate AGB and CC in areas where the grasslands actually exist. This information is derived in mcd_01_5arcmin raster (see Figures.Rmd)
+
+*data for the extract*
+```{r}
+# real grassland area in world. 
+grassland_area_world <- cellSize(mcd_01_5arcmin, unit = "km") * mcd_01_5arcmin
+# plot(cellSize(cc_5y_med , unit = "km"), main = "cellsizes") 
+# plot(mcd_01_5arcmin, main = "fraction of cell that is actually grassland") 
+# plot(grassland_area_world, main = "real grassland area")
+
+
+# AGB and CC
+#ab_5y_med %>% plot() # this is density. Interpretation as follows: "if there is grassland in cell, this shows how much biomass exist on those areas". We want total sums; therefore we use values per pixel
+agb_5y_perpixel <- ab_5y_med * cellSize(ab_5y_med, unit = "km") * mcd_01_5arcmin
+cc_5y_perpixel <- cc_5y_med * cellSize(cc_5y_med, unit = "km") * mcd_01_5arcmin
+
+
+
+# overstocked grasslands only (grassland where RSD > 0.65)
+rsd_overstocked_world <- rsd_5y_med
+rsd_overstocked_world[rsd_overstocked_world < 0.65] <- NA
+# test1 <- rsd_overstocked_world; test1[test1>= 0.65] <- 1; plot(test1) # basic picture
+
+
+ ## areas of overstocked grasslands
+overstocked_area_world <- 
+  cellSize(rsd_overstocked_world, unit = "km") * mcd_01_5arcmin
+plot(overstocked_area_world)
+
+
+
+
+
+# create brick
+countrydata <- c(grassland_area_world, agb_5y_perpixel,
+                 cc_5y_perpixel, overstocked_area_world)
+names(countrydata) <- c("grassland_area_world", "agb_5y_perpixel",
+                        "cc_5y_perpixel", "overstocked_area_world")
+
+```
+
+## extract for every country
+
+*extract*
+```{r}
+# extract 
+countrydata_extracted <- terra::extract(x = countrydata, 
+                                        y = extract_polygons,
+                                        fun = sum, na.rm = TRUE)
+
+
+
+
+ ## add extracted data to sf object with geometries and plot
+adm_10m <- adm_10m %>% 
+  mutate(grassarea_sum = countrydata_extracted$grassland_area_world,
+         agb_sum = countrydata_extracted$agb_5y_perpixel, 
+         cc_sum = countrydata_extracted$cc_5y_perpixel,
+         overstocked_areas_sum = countrydata_extracted$overstocked_area_world,
+         total_area_sum = countrydata_extracted$total_land_area_world) %>% 
+  
+  mutate(fraction_overgrazed = 100*overstocked_areas_sum/ grassarea_sum,
+         fraction_grassland = 100*grassarea_sum/country_total_area_sqkm) 
+
+
+
+ ## plot with tmap (better plot below)
+tm_shape(adm_10m, projection = "+proj=robin") +
+  tm_polygons(col = c("grassarea_sum", "agb_sum",
+                      "overstocked_areas_sum", "fraction_overgrazed"))
+
+```
+
+
+
+
+ ## 6) add rsd median per country to adm_10m 
+
+```{r}
+
+# RSD median
+rsd_med_extracted <- terra::extract(x = rsd_5y_med,  y = extract_polygons,
+                fun = median, na.rm = TRUE)
+
+
+
+
+adm_10m <- adm_10m %>% 
+  mutate(rsd_median = rsd_med_extracted$rsd_med_median) 
+
+
+
+# save country specific data as csv
+adm_10m_df <- as.data.frame(adm_10m) %>% 
+  rename(., total_grassland_area_km2 = grassarea_sum,
+         total_agb_in_kg = agb_sum,
+         total_cc_in_au = cc_sum,
+         total_overgrazed_grassland_area_km2 = overstocked_areas_sum,
+         share_of_countrys_grasslands_overgrazed = fraction_overgrazed,
+         share_of_grasslands_of_total_land_area_of_country = fraction_grassland,
+         median_rsd_value_of_country = rsd_median) %>% 
+  dplyr::select(-geometry)
+
+
+write_csv2(adm_10m_df,
+                file = here("Data", "Supplementary", "Provided_supplementary_material",
+                            "table_country_specific_data_based_on_median_cc_of_2008_2012.csv"))
+
+
+
+# create a table of AGB and CC by country
+adm_10m_df_table <- adm_10m_df %>%
+  mutate(across(c(country_total_area_sqkm, median_rsd_value_of_country), round, 2))
+
+# create html table
+library(kableExtra)
+plt_adm_10m_df_table <-
+adm_10m_df_table %>%
+  kbl(caption = "Tabultaed country-specific results") %>%
+  kable_classic(full_width = F, html_font = "Cambria") #%>%
+plt_adm_10m_df_table
+
+
+```
+
+
+# Plot
+ ## function for plotting polygons
+ 
+```{r}
+create_map_polygons <- function(r_index, r_colnames, index_label,index_main_title,
+                             colorpal, breakvals,
+                             breaknames = NULL,
+                             color_midpoint = NULL, tocrs = NA){
+
+  # create tmap object
+  index_map <- tm_shape(r_index, projection = "+proj=robin") + 
+    tm_polygons(col = r_colnames,
+                palette = colorpal,
+                breaks = breakvals,
+                labels = breaknames,
+              title = index_label,
+              midpoint = color_midpoint,
+              legend.reverse = TRUE) +
+    tm_layout(main.title = index_main_title,
+              main.title.position = "left",
+              main.title.size = 1,
+              legend.bg.color = TRUE,
+              legend.outside = TRUE,
+              frame = FALSE)+
+    tm_borders(col = "grey30", lwd = 0.33) 
+  
+  return (index_map)
+}
+
+```
+ 
+ 
+ 
+# Figure 5, Figure S6
+
+We want both absolute values and relative shares
+For example, total grassland area per country and share of grassland area of country's total land area
+
+
+```{r}
+pal_cc <- scico(n = 6, palette = "bamako", direction = -1)
+pal_npp <- scico(n = 6,begin = 0.4, end = 1, palette = "corkO")
+pal_total_grassland <- scico(n = 6, palette = "davos", direction = -1)
+pal_share_of_max <-  scico(n = 6, palette = "hawaii", begin = 0, end = 1.0, direction = -1)
+pal_min_to_med <-  scico(n = 3, palette = "hawaii", begin = 0.1, end = 0.8)
+
+# simplify --> only for plotting
+adm_10m_simple <- ms_simplify(adm_10m) # this removes +50 rows from adm_10m
+
+
+# RSD fractions and sums
+ ## median rsd per country
+pal_rsd2 <- scico(n = 6, palette = "lajolla")
+
+
+(plt_median_rsd_country <- 
+   create_map_polygons(r_index = adm_10m_simple,
+                    r_colnames = "rsd_median" ,
+                    colorpal = pal_rsd2,
+                    breakvals = c(0, 0.10, 0.20, 0.40, 0.65, 0.80, Inf),
+                    index_label = "rsd",
+                    index_main_title = "Median rsd by country") )
+
+
+
+ ## total sum of overgrazed areas per country
+(plt_total_overgrazed_area <- 
+   create_map_polygons(r_index = adm_10m_simple,
+                    r_colnames = "overstocked_areas_sum" ,
+                    colorpal = pal_total_grassland,
+                    breakvals = c(0, 10000, 1e5, 2e5,5e5, 3e6, Inf),
+                    index_label = "km2",
+                    index_main_title = "Total overgrazed grassland area by country") )
+
+
+
+
+
+ ## overgrazed area of country's total grassland area
+pal_rsd_years_overst <- scico(n = 6, palette = "hawaii", begin = 0.2,end = 0.7,
+                              direction = -1)
+
+(plt_overgrazed_rsd_country <- 
+   create_map_polygons(r_index = adm_10m_simple,
+                    r_colnames = "fraction_overgrazed",
+                    colorpal = pal_rsd_years_overst,
+                    breakvals = c(0, 10, 20, 40, 60, 80, 100),
+                    index_label = "[%]",
+                    index_main_title = "Share of country's grassland area overgrazed"))
+
+
+
+(plt_overgrazed_by_country <- tmap_arrange(
+  plt_median_rsd_country,
+  plt_total_overgrazed_area,
+  plt_overgrazed_rsd_country,
+  ncol = 2))
+
+
+
+tmap_save(plt_overgrazed_by_country,
+          here("Figures", "Figure5_overgrazing_by_country.pdf"),
+          width = 180, height = 150, units = "mm")
+
+
+
+
+
+
+
+# total grassland area per country
+(plt_total_grassland_area <- 
+    create_map_polygons(r_index = adm_10m_simple,
+                    r_colnames = "grassarea_sum" ,
+                    colorpal = pal_total_grassland,
+                    breakvals = c(0, 1e5, 2e5,5e5, 2e6, 5e6, Inf),
+                    index_label = "km2",
+                    index_main_title = "Total grassland area per country") )
+
+
+
+
+# country's grassland area / country's total land area
+(plt_share_of_grasslands_of_total_land_area <- 
+    create_map_polygons(r_index = adm_10m_simple,
+                    r_colnames = "fraction_grassland",
+                    colorpal = pal_min_to_med, # pal_share_of_max
+                    breakvals = c(0, 10, 20, 40, 60, 80, 100),
+                    index_label = "%",
+                    index_main_title = "Share of grassland area of total land area by country") )
+
+
+
+# total biomass per country
+(plt_total_biomass <- 
+   create_map_polygons(r_index = adm_10m_simple,
+                    r_colnames = "agb_sum" ,
+                    colorpal = pal_npp,
+                    breakvals = c(0, 1e9, 1e10, 1e11, 5e11, 1.2e12,  Inf), # c(0, 1e6, 5e7, 1e8, 5e8, 1e9,  Inf)
+                    index_label = "kg",
+                    index_main_title = "Total aboveground biomass (AGB) sum by country") )
+
+
+
+(plts_grassland_areas <- 
+  tmap_arrange(
+  plt_share_of_grasslands_of_total_land_area,
+  plt_total_grassland_area,
+  plt_total_biomass,
+  ncol = 2))
+
+tmap_save(plts_grassland_areas,
+           here("Figures", "Supplementary", "Figure_S6bcd_tot_grass_country_and_fraction_country.pdf"),
+          width = 180, height = 150, units = "mm")
+
+
+```
+
+
+
+
+
+
+
+# Varying grassland extent
+
+We used mode value of land cover class in the main text but here we explored how grassland extent changed over 2001-2015
+
+```{r}
+rastlist_mcd_year <- function(year) {
+  list.files(path = here("Data", "Supplementary"),
+             pattern= paste0("MCD_different_extent_", year), 
+             full.names = TRUE) }
+
+
+rastlist_mcd_year("2001") #check 
+
+
+
+# function for getting the rasterlist and creating a mosaic
+f_mosaic_year_mcd <- function(year) {
+  writeRaster(raster(ext = e, crs = epsg4326),
+            file=paste0(here("Data", "Supplementary"),"/mosaic_mcd_varying_",
+                        year ,".tif"),
+            format="GTiff",
+            overwrite=TRUE ) 
+  
+  mosaic_rasters(gdalfile=rastlist_mcd_year(year),
+               dst_dataset=paste0(here("Data", "Supplementary"), "/mosaic_mcd_varying_",year, ".tif"),
+               of="GTiff")
+} 
+
+f_mosaic_year_mcd("2001") #for testing. merges raster for 2001
+
+
+# run function for all years
+sapply(timestep, f_mosaic_year_mcd) # this takes time 1115
+
+
+
+# get the merged tiffs
+mymergedfiles_mcd_varying <- 
+  list.files(path = here("Data", "Supplementary"),
+             pattern="mosaic_mcd_varying_",
+             full.names=TRUE)
+
+mymergedfiles_mcd_varying
+mcd_varying <- rast(mymergedfiles_mcd_varying) 
+mcd_varying 
+names(mcd_varying) <- c(paste0("mcd", timestep))
+plot(mcd_varying)
+
+# aggregate and resample using MCD with 0101010101010101010101 data.
+# Then we can find mean grassland extent (potential)  in 5 arc-min raster
+# and define some threshold value for "grassland". E.g. aggregated mean < 5% in 5arcmin cell --> not really grassland
+tic()
+mcd_varying_0_1_agg <- aggregate(mcd_varying, fact = 18, fun = "mean", na.rm = T)
+toc() # 41min
+
+tic()
+mcd_varying_0_1_5arcmin <- 
+  resample(mcd_varying_0_1_agg, 
+           rast(here("Data", "Input", "5_Ct_2010_Da.tif")),
+           filename = here("Data", "Supplementary", 
+                              "mcd_varying_2001_2015_1_or_0_5arcmin.tif"))
+toc() # 1 min
+
+mcd_varying_0_1_5arcmin$mcd2015 %>% plot() # send this data to Mika?
+
+
+############################################
+# get the data
+mcd_varying_0_1_5arcmin <- 
+  here("Data", "Supplementary", "mcd_varying_2001_2015_1_or_0_5arcmin.tif") %>% 
+  rast()
+
+mcd_varying_0_1_5arcmin %>% plot()
+############################################
+
+
+
+
+
+
+
+
+
+# extract total grassland area for selected countries. 
+grassland_area_world_15yrs <- cellSize(mcd_varying_0_1_5arcmin, unit = "km") * mcd_varying_0_1_5arcmin
+plot(grassland_area_world_15yrs)
+
+
+mcd_area_15yrs_mycountries <- terra::extract(x = grassland_area_world_15yrs/1e6,
+                                 y = mycountries_extract_polygons, fun = sum, na.rm = T)
+
+# no geometries needed, add just the name of SOVEREIGNT to the df
+mcd_area_15yrs_mycountries <- mcd_area_15yrs_mycountries %>% 
+  mutate(ADMIN = mycountries$ADMIN) %>% 
+  dplyr::select(-ID)
+names(mcd_area_15yrs_mycountries) <- c(paste0("mcd", timestep), "ADMIN")
+
+
+
+ ## test plot
+mcd_area_15yrs_mycountries_long <- mcd_area_15yrs_mycountries %>% 
+ #  filter(SOVEREIGNT %in% c("Chile", "Argentina", "India", "Mexico")) %>% 
+  pivot_longer(cols = mcd2001:mcd2015,
+               names_to = "year",
+               names_prefix = "mcd",
+               values_to = "million_km2" )
+
+
+
+  ### plot plot
+(p_mcd_mycountries <- mcd_area_15yrs_mycountries_long %>% 
+  ggplot(., aes(x = year,
+                y = million_km2,
+                colour = ADMIN, group = ADMIN)) +
+  geom_line(size = 0.5) +
+  ggtitle("Total grassland area in selected countries over 2001-2015")+
+    
+  # Add labels at the end of the line
+  geom_text(data = filter(mcd_area_15yrs_mycountries_long, year == "2015"),
+            aes(label = ADMIN),
+            hjust = 0, nudge_x = 0.1) +
+    
+  # Allow labels to bleed past the canvas boundaries
+  coord_cartesian(clip = 'off') +
+    
+  # Remove legend & adjust margins to give more space for labels
+  theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        panel.background = element_rect(fill = "white"),
+        axis.text.x = element_text(angle = 40, hjust = 1),
+        legend.position = 'none',
+        plot.margin = margin(0.1, 5.6, 0.1, 0.1, "cm")) ) +
+  
+  scale_y_continuous(breaks =c(1,2,3,4,5,6,7,8))
+
+
+ggsave(filename = here("Figures", "Supplementary",
+                       "Figure_S6e_total_grassland_area_in_selected_countries_linegraph.pdf"),
+              plot = p_mcd_mycountries,
+       width = 180, height = 150, units = "mm")
+
+
+
+```
+
+
+# Total CC over 2001-2015 for different countries (use mode mcd value)  --> Kendall trend
+
+Extract carrying capacity (CC) trend for individual countries and calculate trend significance with Kendall's tau
+
+
+
+```{r}
+# CC
+cc_med_per_pixel <- cc_med * cellSize(cc_med, unit = "km") * mcd_01_5arcmin
+  # crop(mcd_varying_0_1_5arcmin, cc_med) 
+
+plot(cc_med_per_pixel$cc_med_2015)  ;#plot(cc_5y_perpixel)
+
+
+
+ ## extract CC
+cc_over_2001_2015 <- terra::extract(x = cc_med_per_pixel, y = extract_polygons,
+                                        fun = sum, na.rm = TRUE) #256 rows
+
+
+
+  ## combine with adm
+adm_10m <- left_join(adm_10m, cc_over_2001_2015, by = "ID")
+
+
+# calculate significances of countrywise CC trends based on Kendals tau
+## function for cor.test()
+f_cortest_countries <- function(admin_name) {
+  test_kendall <- cor.test(x = 1:length(timestep),
+           y = adm_10m %>%
+             as.data.frame() %>% 
+             filter(ADMIN == paste0(admin_name)) %>%
+             dplyr::select(cc_med_2001:cc_med_2015) %>%
+             unlist(),
+           method = "kendall")
+  return(test_kendall %>%  broom::tidy() %>% dplyr::select(estimate, p.value))
+}
+
+ ## test
+f_cortest_countries("Finland")
+ ##  for all countries
+df_cortest <- map_df(countries_list, f_cortest_countries) %>% 
+  mutate(ID = 1:nrow(.)) 
+ # df_cortest %>% filter(p.value > 0.05) %>% nrow() #82 insignificant
+
+
+ ## combine with geometries
+adm_10m_cortest <- left_join(adm_10m, df_cortest, by = "ID") %>% 
+  dplyr::select(ID, SOVEREIGNT, ADMIN, cc_med_2001:cc_med_2015, estimate, p.value)
+
+ ## recode so that insignificants get estimate value of -999
+adm_10m_cortest <- adm_10m_cortest %>% 
+  mutate(estimate.significant = case_when(
+    p.value <= 0.05 ~ estimate,
+    p.value > 0.05 ~  -999)) %>%  # maybe NA even better
+  mutate(estimate.significant = na_if(estimate.significant, -999))
+
+
+
+
+ ## save
+cc_over_2001_2015_df <- as.data.frame(adm_10m_cortest) %>%
+  dplyr::select(-geometry)
+# 
+write_csv2(cc_over_2001_2015_df,
+                file = here("Data", "Supplementary", "Provided_supplementary_material",
+                            "table_total_cc_in_AUs_2001_2015_countries.csv"))
+
+
+
+# plot
+pal_trend <- scico(n = 6, palette = "roma")
+
+
+(plt_cc_kendall_country <-
+    create_map_polygons(r_index = ms_simplify(adm_10m_cortest),
+                    r_colnames = "estimate.significant" ,
+                    colorpal = pal_trend,
+                    breakvals = c(-1, -0.5,0, 0.5, 1),
+                    breaknames = c("< -0.5", "-0.5, 0", "0, 0.5", "> 0.5"),
+                    index_label = "AU",
+                    index_main_title = "Significant change in CC over 2001-2015 by country [Kendall's tau]") )
+
+
+
+tmap_save(plt_cc_kendall_country, filename = here("Figures", "Figure3b_cor_test_kendall_country.pdf"),
+          width = 180, height = 150, units = "mm")
+```
+
+
+
+# 7) MCD -- total grassland area per country for each year 2001-2015 --> here we use varying mcd
+
+Varying land cover is not addressed in the manuscript (only for selected countries in Figure S6e in the Appendix). However, we provide this as supplementary data.
+
+```{r}
+mcd_varying_perpixel <-  cellSize(mcd_varying_0_1_5arcmin, unit = "km") * mcd_varying_0_1_5arcmin 
+names(mcd_varying_perpixel) <- c(paste0("grassarea", timestep))
+ ## extract
+mcd_varying_over_2001_2015 <- terra::extract(x = mcd_varying_perpixel, y = extract_polygons,
+                                        fun = sum, na.rm = TRUE)
+ ## add admin and sovereignt
+mcd_varying_over_2001_2015_df <- as.data.frame(mcd_varying_over_2001_2015) %>% 
+  mutate(Sovereignt = adm_10m$SOVEREIGNT,
+         Admin = adm_10m$ADMIN) %>% 
+  dplyr::select(Sovereignt, Admin, grassarea2001:grassarea2015)
+
+
+write_csv2(mcd_varying_over_2001_2015_df,
+                file = here("Data", "Supplementary", "Provided_supplementary_material",
+                            "table_varying_grasslandarea_in_km2_2001_2015_countries.csv"))
+```
+
+
+
+# 8) Comparison of AGB to other global studies Wolf et al. (2021) and Sun et al. (2021)
+See Figure S5 in the Appendix
+
+```{r}
+ab_med_2006_2010 <- sim_df %>% 
+  dplyr::select(x,y,ab_med_2006, ab_med_2007, ab_med_2008, ab_med_2009, ab_med_2010) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast()
+
+
+agb_med_2006_2010_perpixel <- ab_med_2006_2010 * cellSize(ab_med_2006_2010, unit = "km") * mcd_01_5arcmin
+
+
+# extract sum of agb for countries
+agb_sum_2006_2010_extracted <- terra::extract(x = agb_med_2006_2010_perpixel, 
+                                        y = extract_polygons,
+                                        fun = sum, na.rm = TRUE)
+
+ # find median of these sums
+agb_sum_2006_2010_extracted <- agb_sum_2006_2010_extracted %>% 
+  dplyr::select(-ID) %>% 
+    mutate(agb_median_of_2006_2010_sums =
+           rowMedians(as.matrix(.),na.rm = TRUE))
+
+
+ # add this median to adm_10m
+adm_10m <- adm_10m %>% 
+  mutate(agb_median_2006_2010 = agb_sum_2006_2010_extracted$agb_median_of_2006_2010_sums) 
+
+
+
+Figure_S5_MODIS_NPP_based_AGB_with_restrictions <- adm_10m %>% 
+  dplyr::select(-country_total_area_sqkm, -geometry) %>% 
+  filter(ADMIN %in% mycountries_list)
+
+
+
+
+
+
+########################################## same for isimip (data from figures.supplementary.Rmd)
+# AGB ISIMIP
+ab_med_2006_2010_isimip <- sim_isimip %>% 
+  dplyr::select(x,y,agb_med_2006,agb_med_2007,agb_med_2008, agb_med_2009,agb_med_2010) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast()
+
+agb_med_2006_2010_perpixel_isimip <- 
+  ab_med_2006_2010_isimip * cellSize(ab_med_2006_2010_isimip, unit = "km") * mcd_01_5arcmin
+
+
+ ## extract sum of agb for countries ISIMIP
+agb_sum_2006_2010_extracted_isimip <- terra::extract(x = agb_med_2006_2010_perpixel_isimip, 
+                                        y = extract_polygons,
+                                        fun = sum, na.rm = TRUE)
+
+
+
+ # find median of these sums
+agb_sum_2006_2010_extracted_isimip <- agb_sum_2006_2010_extracted_isimip %>% 
+  dplyr::select(-ID) %>% 
+    mutate(agb_median_of_2006_2010_sums_isimip =
+           rowMedians(as.matrix(.),na.rm = TRUE))
+
+ # add this median to adm_10m
+adm_10m <- adm_10m %>% 
+  mutate(agb_median_2006_2010_isimip = agb_sum_2006_2010_extracted_isimip$agb_median_of_2006_2010_sums_isimip) 
+
+
+
+
+Figure_S5_MODIS_ISIMIP_based_AGB_with_restrictions  <- adm_10m %>% 
+  dplyr::select(-country_total_area_sqkm, -agb_median_2006_2010) %>% 
+  filter(ADMIN %in% mycountries_list)
+
+```
+
+
+# extract unrestricted AGB sums by country for Figure S5 (in the Appendix)
+
+```{r}
+agb_5arcmin_unrestricted <- 
+  here("Data", "Output", "agb_no_simulation_unrestricted_biomass_kg_km2_5arcmin.tif") %>% 
+  rast()
+names(agb_5arcmin_unrestricted) <- c(paste0("agb_unrest_", timestep))
+
+
+
+# select only variables needed
+agb_unrestricted_2006_2010 <-
+  agb_5arcmin_unrestricted[[c("agb_unrest_2006", "agb_unrest_2007", "agb_unrest_2008",
+                                "agb_unrest_2009", "agb_unrest_2010")]]
+
+# crop to match mcd_01_5arcmin
+agb_unrestricted_2006_2010 <- crop(agb_unrestricted_2006_2010, mcd_01_5arcmin)
+
+# calculate AGB unrestricted per pixel
+
+agb_unrestricted_2006_2010_perpixel <- agb_unrestricted_2006_2010 * cellSize(agb_unrestricted_2006_2010, unit = "km") * mcd_01_5arcmin
+
+
+# extract sum of agb for countries
+agb_unrestricted_sum_2006_2010_extracted <- terra::extract(x = agb_unrestricted_2006_2010_perpixel, 
+                                        y = extract_polygons,
+                                        fun = sum, na.rm = TRUE)
+
+
+
+ # find median of these sums
+agb_unrestricted_sum_2006_2010_extracted <- agb_unrestricted_sum_2006_2010_extracted %>% 
+  dplyr::select(-ID) %>% 
+    mutate(agb_unres_median_of_2006_2010_sums =
+           rowMedians(as.matrix(.),na.rm = TRUE))
+
+
+ # add this median to adm_10m
+adm_10m <- adm_10m %>% 
+  mutate(agb_unres_median_2006_2010 = 
+           agb_unrestricted_sum_2006_2010_extracted$agb_unres_median_of_2006_2010_sums) 
+
+
+
+
+Figure_S5_MODIS_NPP_based_AGB_unrestricted  <- adm_10m %>% 
+  dplyr::select(-country_total_area_sqkm) %>% 
+  filter(ADMIN %in% mycountries_list) 
+```
+
+ 
+ 

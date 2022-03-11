@@ -1,0 +1,499 @@
+---
+title: "Calculate total areas for figures"
+author: "Johannes Piipponen"
+date: "26 01 2022"
+output: html_document
+---
+
+# Introduction 
+
+In this document we calculate figure classes. For example, Fig 2 "% of total area" calculated here.
+Moreover, Table S1 calculated at the end of this document
+
+# Calculate surface areas for different figure classes
+figures.rmd must be read in
+
+```{r}
+# function that help to calculate areas for figure classes
+f_area <- function(lower_bound, upper_bound) {
+  var_low_up <- var_to_examine 
+  var_low_up[var_low_up < lower_bound] <- NA
+  var_low_up[var_low_up >=  upper_bound] <- NA
+  
+  # raster of actual grassland area of the class (eg class agb < 25)
+  r_of_areas <- cellSize(var_low_up, unit = "km") * mcd_01_5arcmin 
+  
+  # sum of all cells
+  return(sum(values(r_of_areas), na.rm = TRUE))
+}
+
+```
+
+
+
+# Figure 2a areas (median ab and cc) 
+
+```{r}
+var_to_examine <- ab_5y_med/1e3
+
+# Calculate total grassland area
+# First, calculate cell sizes, then multiply by the fraction of grassland area that actually exist in each cell
+grassland_area_raster <- 
+  cellSize(var_to_examine, unit = "km") * mcd_01_5arcmin 
+# sum these values
+(total_area <- sum(values(grassland_area_raster), na.rm = T)) # 54148698
+##(total_area_wrong <- expanse(var_to_examine, unit = "km")) #  98184600 # this computes sum of all cells that has some grassland
+
+summary(ab_5y_med/1e3)
+100*f_area(-Inf, 25)/total_area
+100*f_area(25, 50)/total_area
+100*f_area(50, 100)/total_area
+100*f_area(100, 200)/total_area
+100*f_area(200, 400)/total_area
+100*f_area(400, Inf)/total_area
+22 + 12 +20 +20 +20+ 6
+
+
+
+# cc quick check --> sligthly different values
+var_to_examine <- cc_5y_med
+100*f_area(-Inf, 5)/total_area # total area is the same as earlier
+100*f_area(5, 10)/total_area
+100*f_area(10, 20)/total_area
+100*f_area(20, 41)/total_area
+100*f_area(41, 82)/total_area
+100*f_area(82, Inf)/total_area
+22 + 12 + 20 + 20 + 20 + 6
+
+
+```
+
+# Figure 2b cc trend
+
+```{r}
+var_to_examine <-  cc_trend$estimate*15
+# total grassland area defined earlier
+
+
+# modify function f_area a bit (just some cropping as mcd_01_5arcmin as the extent differ due to some na rows we had to remove from lm_rast.tif before regression
+f_area_lm <- function(lower_bound, upper_bound) {
+  var_low_up <- var_to_examine 
+  var_low_up[var_low_up < lower_bound] <- NA
+  var_low_up[var_low_up >=  upper_bound] <- NA
+  
+  # raster of actual grassland area of the class (eg class agb < 25)
+  r_of_areas <- cellSize(var_low_up, unit = "km") * 
+    crop(mcd_01_5arcmin, var_to_examine)
+  
+  # sum of all cells
+  return(sum(values(r_of_areas), na.rm = TRUE))
+}
+
+
+
+## all trend classes
+100*f_area_lm(-Inf, -20) / total_area
+100*f_area_lm(-20, -5) / total_area
+100*f_area_lm(-5, 0) / total_area
+100*f_area_lm(0, 5) / total_area
+100*f_area_lm(5, 20) / total_area
+100*f_area_lm(20, Inf) / total_area
+8 + 13 + 6 + 4 + 6 + 5 # = 42, so non-significant trend covers the rest, 58%
+
+```
+
+
+# Figure 2c IV
+
+```{r}
+var_to_examine <- ab_iv 
+
+
+summary(ab_iv)
+100*f_area(-Inf, 5)/total_area # total area the same, 54148698 km2
+100*f_area(5, 10)/total_area
+100*f_area(10, 20)/total_area
+100*f_area(20, 30)/total_area
+100*f_area(30, 40)/total_area
+100*f_area(40, Inf)/total_area
+1 + 14 + 44 + 24 + 8 + 9
+
+
+```
+
+
+
+# Figure 2d min to med ratio
+
+```{r}
+var_to_examine <- 100 *ab_min_to_med  
+
+summary(100 *ab_min_to_med)
+100*f_area(-Inf, 10)/total_area
+100*f_area(10, 20)/total_area
+100*f_area(20, 40)/total_area
+100*f_area(40, 60)/total_area
+100*f_area(60, 80)/total_area
+100*f_area(80, Inf)/total_area
+
+2 + 3 + 5 + 14 + 47 + 29
+
+```
+
+
+
+# Figure 4 RSD maps 
+
+```{r}
+# rsd_5y_med
+var_to_examine <-  rsd_5y_med
+summary(rsd_5y_med)
+100*f_area(-Inf, 0.20)/total_area
+100*f_area(0.20, 0.65)/total_area
+100*f_area(0.65, Inf)/total_area
+42 + 28 + 30
+
+
+
+# rsd_max
+var_to_examine <- rsd_max
+
+
+# total area sligtly different due to rowmax function
+grassland_area_raster_rsd_max <- 
+  cellSize(rsd_max, unit = "km") * mcd_01_5arcmin 
+# sum these values
+(total_area_rsd_max <- sum(values(grassland_area_raster_rsd_max), na.rm = T)) # 53543173
+summary(rsd_max)
+100*f_area(-Inf, 0.20)/total_area_rsd_max
+100*f_area(0.20, 0.65)/total_area_rsd_max
+100*f_area(0.65, Inf)/total_area_rsd_max
+35 + 26 + 39
+
+
+
+
+# rsd_years_overstocked
+var_to_examine <- rsd_years_overstocked
+summary(rsd_years_overstocked)
+
+# calculate total area
+grassland_area_raster_rsd_overstocked <- 
+  cellSize(rsd_years_overstocked, unit = "km") * mcd_01_5arcmin 
+## sum these values
+(total_area_rsd_overstocked <-
+    sum(values(grassland_area_raster_rsd_overstocked), na.rm = T)) # 55429466
+
+
+100*f_area(-Inf, 0.00001)/total_area_rsd_overstocked #
+100*f_area(0.00001, 20)/total_area_rsd_overstocked 
+100*f_area(20, 40)/total_area_rsd_overstocked 
+100*f_area(40, 60)/total_area_rsd_overstocked
+100*f_area(60, 80)/total_area_rsd_overstocked
+100*f_area(80, Inf)/total_area_rsd_overstocked
+62 + 5 + 3 + 3 + 3+ 24
+
+
+```
+
+
+# Figure 5 livestock-only systems
+
+CC in livestock-only grasslands
+RSD in livestock-only grasslands
+
+```{r}
+# cc_5y_glp --> cc masked to glp areas
+var_to_examine <-  cc_5y_glp
+
+# calculate total area
+grassland_area_raster_glp <- 
+  cellSize(cc_5y_glp, unit = "km") * mcd_01_5arcmin 
+## sum these values
+(total_area_glp <-
+    sum(values(grassland_area_raster_glp), na.rm = T)) # 39205571
+
+
+
+hist(cc_5y_glp, xlim= c(0, 100), breaks = 100)
+100*f_area(-Inf, 5)/total_area_glp
+100*f_area(5, 10)/total_area_glp
+100*f_area(10, 21)/total_area_glp
+100*f_area(21, 42)/total_area_glp
+100*f_area(42, 83)/total_area_glp
+100*f_area(83, Inf)/total_area_glp
+
+24 + 12 + 19 + 18 + 21 + 6
+
+
+
+
+# rsd_5y_glp --> cc masked to glp areas
+var_to_examine <-  rsd_5y_glp
+hist(rsd_5y_glp, xlim= c(0, 1), breaks= 1000)
+100*f_area(-Inf, 0.20)/total_area_glp
+100*f_area(0.20, 0.65)/total_area_glp
+100*f_area(0.65, Inf)/total_area_glp
+
+47 + 29 + 24
+```
+
+
+# Figure 6 CV
+
+
+```{r}
+# ab_cv
+var_to_examine <- 100*ab_cv
+
+# calculate total area
+grassland_area_raster_ab_cv <- 
+  cellSize(100*ab_cv, unit = "km") * mcd_01_5arcmin 
+## sum these values
+(total_area_ab_cv <-
+    sum(values(grassland_area_raster_ab_cv), na.rm = T)) # 54149067
+
+
+summary(100*ab_cv)
+100*f_area(15, 20)/total_area_ab_cv
+100*f_area(20, 25)/total_area_ab_cv
+100*f_area(25, 30)/total_area_ab_cv
+100*f_area(30, 35)/total_area_ab_cv
+100*f_area(35, 40)/total_area_ab_cv
+100*f_area(40, Inf)/total_area_ab_cv
+66 + 20 + 11 + 3 + 0 + 0
+
+
+
+
+
+# rsd_cv
+var_to_examine <- 100*rsd_cv
+
+# calculate total area
+grassland_area_raster_rsd_cv <- 
+  cellSize(100*rsd_cv, unit = "km") * mcd_01_5arcmin 
+## sum these values
+(total_area_rsd_cv <-
+    sum(values(grassland_area_raster_rsd_cv), na.rm = T)) # 39205571
+
+
+summary(100*rsd_cv)
+100*f_area(15, 20)/total_area_rsd_cv
+100*f_area(20, 25)/total_area_rsd_cv
+100*f_area(25, 30)/total_area_rsd_cv
+100*f_area(30, 35)/total_area_rsd_cv
+100*f_area(35, 40)/total_area_rsd_cv
+100*f_area(40, Inf)/total_area_rsd_cv
+4 + 19 + 39 + 26 + 9 + 3
+
+```
+
+
+# Supplementary figures
+
+! need to be modified
+
+```{r}
+
+# ISIMIP AGB
+var_to_examine <- agb_med_isimip_2006_2010/1e3 # from figures_supplementary.Rmd
+
+
+# calculate total grassland area for isimip maps
+grassland_area_raster_isimip <- 
+  cellSize(agb_med_isimip_2006_2010, unit = "km") * mcd_01_5arcmin 
+ ## sum these values
+(total_area_isimip <-
+    sum(values(grassland_area_raster_isimip), na.rm = T)) # 46019190
+
+
+
+
+summary(agb_med_isimip_2006_2010/1e3)
+100*f_area(-Inf, 25)/total_area_isimip
+100*f_area(25, 50)/total_area_isimip
+100*f_area(50, 100)/total_area_isimip
+100*f_area(100, 200)/total_area_isimip
+100*f_area(200, 400)/total_area_isimip
+100*f_area(400, Inf)/total_area_isimip
+21 + 9 + 16 + 22+ 25 + 7
+
+
+
+# ISIMIP IV AGB
+var_to_examine <- agb_iv_isimip_2001_2010 
+summary(agb_iv_isimip_2001_2010)
+100*f_area(-Inf, 5)/total_area_isimip
+100*f_area(5, 10)/total_area_isimip
+100*f_area(10, 20)/total_area_isimip
+100*f_area(20, 30)/total_area_isimip
+100*f_area(30, 40)/total_area_isimip
+100*f_area(40, Inf)/total_area_isimip
+5 + 23 +45 + 20 + 4 + 3
+
+
+
+# ISIMIP CV AGB
+var_to_examine <- 100*agb_cv_isimip_2006_2010
+summary(100*agb_cv_isimip_2006_2010)
+100*f_area(15, 20)/total_area_isimip
+100*f_area(20, 25)/total_area_isimip
+100*f_area(25, 30)/total_area_isimip
+100*f_area(30, 35)/total_area_isimip
+100*f_area(35, 40)/total_area_isimip
+100*f_area(40, Inf)/total_area_isimip
+1 + 6 + 10 + 13 + 12 + 58
+
+
+
+# MODIS_AGB / ISIMIP_AGB
+var_to_examine <- 100*agb_div
+summary(100*agb_div)
+100*f_area(0, 50)/total_area_isimip
+100*f_area(50, 75)/total_area_isimip
+100*f_area(75, 100)/total_area_isimip
+100*f_area(100, 125)/total_area_isimip
+100*f_area(125, 150)/total_area_isimip
+100*f_area(150, Inf)/total_area_isimip
+10 + 17 + 25 + 24 + 14 + 10
+
+
+
+# RSD calculated with areal weighted animals
+var_to_examine <-  crop(rsd_5y_med_aw, mcd_01_5arcmin) # this rsd derived in figures_supplementary_Rmd
+summary(rsd_5y_med_aw)
+100*f_area(-Inf, 0.20)/total_area # total area as above, 54148698
+100*f_area(0.20, 0.65)/total_area
+100*f_area(0.65, Inf)/total_area
+40 + 30 + 30
+
+
+
+
+```
+
+
+
+
+
+# Extra calculations 
+
+-total CC and CC in livestock-grazing areas
+-total number of animal units (AU) in our study area and livestock-grazing grasslands
+
+
+```{r}
+# cc per pixel (originally per km2 and therefore we multiply with cellsize)
+# we also multiply this by the fraction of real grassland area as CC is expressed as AU/km2 which means that if there is grassland in the cell, the density is xx AU/km2
+cc_per_pixel <-  cc_5y_med * cellSize(cc_5y_med, unit = "km") * mcd_01_5arcmin
+plot(cc_per_pixel)
+
+
+# total CC (area = IGBP classes 8-10)
+global(cc_per_pixel, fun = "sum", na.rm = TRUE ) / 1e6 # 1537 million AU
+#sum(values(cc_per_pixel), na.rm = T) / 1e6
+
+
+
+
+# mask cc to livestock-only grasslands
+cc_5y_med_glp <- mask(cc_5y_med, glp_5as)
+# cc per pixel in livestock-only systems. Again, multiply with the "real" grassland area
+cc_per_pixel_glp <- cc_5y_med_glp * cellSize(cc_5y_med_glp, unit = "km") * mcd_01_5arcmin
+plot(cc_per_pixel_glp)
+#total cc in livestock-only areas
+global(cc_per_pixel_glp, fun = "sum", na.rm = TRUE ) / 1e6 # 1117
+
+
+
+# cc in glp areas compared to cc in whole study area
+global(cc_per_pixel_glp, fun = "sum", na.rm = TRUE ) / 
+  global(cc_per_pixel, fun = "sum", na.rm = TRUE )  # 73%
+
+
+# GLW total numbers
+# first, non simulated animal numbers
+data_for_simulations <- 
+  here("Data", "Output", "data_for_simulations.tif") %>% rast() 
+
+
+global(data_for_simulations$cattle,
+       fun = sum,  na.rm = TRUE ) / 1e6 # 1335 million cows
+global(data_for_simulations$sheep,
+       fun = sum,  na.rm = TRUE ) / 1e6 # 968 million sheep 
+global(data_for_simulations$buffalo,
+       fun = sum,  na.rm = TRUE ) / 1e6 #  143 million buffalo 
+global(data_for_simulations$horse,
+       fun = sum,  na.rm = TRUE ) / 1e6 #  59 million horse 
+global(data_for_simulations$goat,
+       fun = sum,  na.rm = TRUE ) / 1e6 #  778 million goat 
+
+# this is alltogether something between
+1335*0.5 + 968*0.10 + 143 * 0.6 + 59*0.4 + 778*0.1 # 951 m AU when minimum conversion factors are used, see S2.8
+# and
+1335*1.25 + 968*0.15 + 143 * 0.7 + 59*1.8 + 778*0.15 # 2137 m AU when max animal unit conversion factors are used, see S2.8
+
+
+
+## # GLW modelled (and simulated) animal units
+# We want to explore total number of animal units in our study area and livestock-grazing grasslands
+au_per_km2 <- sim_df %>% 
+  dplyr::select(x,y,au_pkm2_med_2010)  %>%
+  rasterFromXYZ(., crs = epsg4326) %>%
+  rast()
+
+# Areal weighted (aw) product
+# sim_aw_animals <- here("Data","Supplementary", "simulation_results_global_n1000_aw_animals.csv") %>% 
+#   fread()
+# names(sim_aw_animals)
+
+# au_per_km2 <- sim_aw_animals %>% 
+#   dplyr::select(x,y,au_pkm2_med_2010)  %>% 
+#   rasterFromXYZ(., crs = epsg4326) %>% 
+#   rast()
+
+
+
+
+# as unit is per km2, we have to multiply this with pixelarea to get number of au per pixel
+au_per_pixel <-  au_per_km2 * cellSize(au_per_km2, unit = "km")
+
+#total AU in our study area
+global(au_per_pixel, fun = "sum", na.rm = TRUE ) / 1e6 # 1492 AU
+
+
+
+#AU in livestock-only systems
+## au per pixel masked in glp areas
+au_per_km2_glp <- crop(au_per_km2, glp_5as) %>% 
+  mask(., glp_5as)
+au_per_pixel_glp <- au_per_km2_glp * cellSize(au_per_km2_glp, unit = "km")
+global(au_per_pixel_glp, fun = "sum", na.rm = TRUE ) / 1e6 # 629 million AU  was 671.1269	million AU
+
+
+# tibble of abs values
+tibble(
+  cc_total = global(cc_per_pixel, fun = "sum", na.rm = TRUE ) / 1e6,
+  cc_total_livestock_grazing = global(cc_per_pixel_glp, fun = "sum", na.rm = TRUE ) / 1e6,
+  au_total = global(au_per_pixel, fun = "sum", na.rm = TRUE ) / 1e6,
+  au_total_livestock_grazing = global(au_per_pixel_glp, fun = "sum", na.rm = TRUE ) / 1e6) %>% 
+  unlist() 
+
+# tibble of relative shares
+tibble(
+ cc_glp_of_total_cc = global(cc_per_pixel_glp, fun = "sum", na.rm = TRUE ) /
+   global(cc_per_pixel, fun = "sum", na.rm = TRUE ),
+ au_glp_of_total_au =  global(au_per_pixel_glp, fun = "sum", na.rm = TRUE )/
+    global(au_per_pixel, fun = "sum", na.rm = TRUE ),
+ potential_used = global(au_per_pixel, fun = "sum", na.rm = TRUE ) /
+   global(cc_per_pixel, fun = "sum", na.rm = TRUE ),
+ potential_used_glp = global(au_per_pixel_glp, fun = "sum", na.rm = TRUE ) /
+   global(cc_per_pixel_glp, fun = "sum", na.rm = TRUE ) ) %>% 
+  unlist() 
+
+
+```
+
+
+

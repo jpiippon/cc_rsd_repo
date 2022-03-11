@@ -1,0 +1,257 @@
+---
+title: "agb_isimip"
+author: "Gabriel Cramer"
+date: "01-01-2022"
+output: html_document
+---
+
+# Introduction
+Simulate ISIMIP2a derived AGB. See Appendix S2.10
+
+## Set up
+
+```{r setup, echo = FALSE}
+
+packages <-  c("tidyverse", "truncnorm", "matrixStats", "tictoc", "here", "data.table", "parallel", "sp", "terra", "scico", "beepr", "gdalUtils", "collapse")
+lapply(packages, require, character.only = TRUE)
+
+
+dt <- fread(here("Data", "Output", "data_for_simulations.csv"))
+isimip <- fread(here("Data", "Supplementary", "isimip_npp_kgC_km2_yr.csv"))
+isimip
+
+
+pal_cv <- scico(n = 6, palette = "nuuk", direction = -1)
+```
+
+As well as reading in the data we need to set up some objects that are programmable
+
+```{r programmable input objects}
+
+n <- 1000 # will be 1000 eventually for full results
+c <- 1 # the mean value of the var_rnorm_npp simulations
+sd2 <- 0.198 * 0.71 # called 2 for conistency with main scripts
+
+# distributions for AB sims
+carbcf_dist <- rtruncnorm(n, a=0.47, b=0.50)
+var_rnorm_temp_dist <- rnorm(n, mean = c, sd = sd2)
+
+```
+
+
+## Helper functions for building matrices
+
+```{r rep functions}
+
+rep_col <- function(column, n) {
+  matrix(rep(column, each = n), ncol = n, byrow = TRUE)
+}
+
+rep_row <- function(vec, n) {
+  matrix(rep(vec, each = n), nrow = n)
+}
+
+```
+
+## Work with the ISIMIP Models
+
+There are estimations of NPP from 12 models for years 2000-2010.
+We need the mean and sd of all models for each year in order to simulate with a truncated normal distributions. 
+A function does the work on a single year. We apply the function to the list of years and cbind the results. 
+Should take 10-13 seconds.
+
+```{r work out bounds for ISIMIP}
+
+prep_isimip <- function(annus, mensa) {
+  
+  mensa <- mensa %>% 
+    dplyr::select(dplyr::contains(annus)) %>% 
+    as.matrix(.)
+  
+  m <- matrixStats::rowMeans2(mensa)
+  sd <- matrixStats::rowSds(mensa)
+  
+  out <- cbind(m, sd)
+  
+  colnames(out) <- sapply(colnames(out), function(x) {stringr::str_c(x, "_", annus)})
+  
+  return(out)
+  
+}
+
+tic()
+
+years <- as.character(2000:2010)
+
+isimip_xy <- isimip %>% dplyr::select(x, y)
+
+bounds <- lapply(years, prep_isimip, isimip)
+bounds <- do.call(cbind, bounds)
+bounds <- cbind(isimip_xy, bounds) %>% as.data.frame(.)
+
+toc() 
+#beepr::beep(1)
+
+```
+
+and a bit of munging
+
+```{r cold areas}
+
+# identify cold area cells - negative fANPP cells
+cold_areas <- dt %>%
+  dplyr::mutate(idx = row_number()) %>%
+  # dplyr::filter(across(avgtemp_2001:avgtemp_2015, ~ .x <= -0.171/0.0129)) %>%
+  dplyr::filter(across(avgtemp_2001:avgtemp_2015, ~ .x <= -10)) %>%
+  dplyr::select(idx) %>%
+  dplyr::pull()
+
+# adjust temperature values (here we allocated fraction of NPP to aboveground biomass)
+dt <- dt %>% 
+  dplyr::mutate(across(avgtemp_2001:avgtemp_2015, ~  (0.171 + 0.0129 * .x))) %>% 
+  as.data.frame(.)
+
+```
+
+## Join with original dataset
+
+We know there are cells that don't match. Not entirely clear why. However, the vast majority match. There are a number of ways to deal with this, depending on what calculations need to be done next - e.g. if there are numerical calculations we might not want to categorise mismatches as -9999. Similarly if there are NA values for other reasons, we may want not want to categorise mismatches as NA.
+
+The solution I propose is to create a separate vector to act as an index, which can then be used later on if needed. 
+
+```{r}
+
+dt <- dt %>% dplyr::mutate(modis = 1)
+bounds <- bounds %>% dplyr::mutate(isimip = 1)
+
+dt <- dplyr::full_join(dt, bounds, by = c("x", "y"), suffix = c("m", "i"))
+rm(bounds, isimip, isimip_xy)
+
+non_matches <- which(is.na(dt$modis) | is.na(dt$isimip))
+
+```
+
+## A function to simulate Above Ground Biomass
+
+```{r sim_ab repeated distribution}
+
+
+sim_agb_isimip <- function(year, d, n, carbcf_dist, var_rnorm_temp_dist) {
+  
+  n2 <- nrow(d)
+  
+  d <- d %>% dplyr::select(contains(year), slope) %>% as.matrix(.)
+  colnames(d) <- c("npp_modis", "avgtemp", "tc_bot", "tc_med", "tc_up", "m", "sd", "slope")
+  cat(".") # note that we don't have modis data here. Instead, m and sd from ISIMIP data is used 
+  
+  simnpp_biom <- apply(d, 1, function(x) {rtruncnorm(n, mean = x["m"], sd = x["sd"])}); cat(",")
+  simnpp_biom <- t(simnpp_biom)
+  simnpp_biom <- collapse::TRA(simnpp_biom, carbcf_dist, "/"); cat(".")
+  
+  avgtemp_mat <- rep_col(d[, "avgtemp"], n)
+  simfANPP <- collapse::TRA(avgtemp_mat, var_rnorm_temp_dist, "*")
+  cat(".")
+
+  simtreecov <- apply(d, 1, function(x) {rtruncnorm(n, a = x["tc_bot"], b = x["tc_up"], mean = x["tc_med"])})
+  simtreecov <- t(simtreecov) 
+  simtreecov[is.na(simtreecov)] <- 1
+  cat(".")
+  
+  # slope  
+  slope <- rep_col(d[, "slope"], n)
+  
+  # compute above ground biomass
+  ab <- simnpp_biom * simfANPP * simtreecov * slope
+  ab[ab < 0.1] <- NA
+  cat(".")
+  
+  agb_med <- matrixStats::rowMedians(ab, na.rm = TRUE)
+  agb_cv <- matrixStats::rowSds(ab, na.rm = TRUE) / matrixStats::rowMeans2(ab, na.rm = TRUE)
+  cat(".")
+  
+  agb <- cbind(agb_med, agb_cv)
+  colnames(agb) <- sapply(colnames(agb), function(x) {stringr::str_c(x, "_", year)})
+  
+  cat("|")
+  
+  return(agb)
+  
+}
+
+```
+
+## apply sim function over year list
+
+```{r chunk the ISIMIP}
+
+isimip_chunk <- function(d, n, years, carbcf_dist, var_rnorm_temp_dist) {
+  
+  xy <- d %>% dplyr::select(x, y) %>% as.matrix(.)
+
+  agb <- lapply(years, sim_agb_isimip, d, n, carbcf_dist, var_rnorm_temp_dist)
+  agb <- do.call(cbind, agb)
+  agb <- cbind(xy, agb)
+  agb <- as.data.frame(agb)
+  cat("\n")
+  
+  return(agb)
+  
+}
+
+```
+
+## split into chunks and run over chunks
+
+```{r}
+
+#f <- rep(seq_len(ceiling(nrow(dt)/10000)), each = 10000, length.out = nrow(dt))
+f <- rep(seq_len(ceiling(nrow(dt)/40000)), each = 40000, length.out = nrow(dt))
+b_list <- split(dt, f = f) 
+rm(dt)
+
+years <- as.character(2001:2010) # turns out years aren't fully compatible, so these are the compatible years
+tic()
+results <- lapply(b_list, isimip_chunk, n, years, carbcf_dist, var_rnorm_temp_dist)
+toc()
+results <- do.call(rbind, results)
+
+results[cold_areas, 3:ncol(results)] <- NA # only run for full dataset
+results[non_matches, 3:ncol(results)] <- NA # only run for full dataset
+
+
+fwrite(results, here("Data", "Supplementary", "isimip_agb_1000sim.csv"))
+
+# beepr::beep(8)
+
+```
+
+plot to see if the results look at all plausible. Bear in mind this script sets the number of simulations to 100, if you want to run the full sim, change to 1000
+
+```{r plot the abg}
+
+test <- as.matrix(results)
+
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+pal_cv <-  scico::scico(n = 6, palette = "nuuk", direction = -1)
+
+
+r_list <- list()
+nms <- colnames(test)[3:length(colnames(test))]
+
+for (i in 1:(length(colnames(test))-2)) {
+  m <- test[, c(1, 2, i+2)]
+  r_list[[i]] <- raster::rasterFromXYZ(m, crs = epsg4326)
+  cat(".")
+}
+
+names(r_list) <- nms
+
+# change pattern argument in grepl() for different plots
+for (name in names(r_list)) {
+  if (grepl("med", name) == T) {
+    raster::plot(r_list[[name]], main = name)
+  }
+  
+}
+
+```

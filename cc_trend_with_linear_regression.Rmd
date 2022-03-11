@@ -1,0 +1,87 @@
+---
+title: "CC trend linear regression"
+author: "Johannes Piipponen"
+date: "21 2 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+Calculate linear trend based on simulated CC data. See simulation.Rmd and figures.Rmd
+
+
+
+
+```{r}
+library(tidyverse); library(raster); library(gdalUtils); library(scico); library(tmap); library(tmaptools); library(sf); library(terra); library(here)
+library(data.table); library(broom); library(Rfast); library(matrixStats); library(tictoc)
+
+timestep <- 2001:2015
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+
+# options, mainly for terra package
+terraOptions(tempdir= here("Temp_R"))
+terraOptions()
+rasterOptions(tmpdir= here("Temp_R"))
+rasterOptions()
+
+wopt_options <- list(gdal = c("BIGTIFF=YES",
+                "PREDICTOR = 2",
+                "NUM_THREADS = ALL_CPUS"))
+
+
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+```
+
+
+# Linear trend for carrying capacity (CC)
+
+There are multiple ways to do this
+
+```{r}
+# data from simulation.Rmd
+sim_df <- here("Data","Output", "simulation_results_n1000.csv") %>% 
+  fread()
+
+cc_xy <- sim_df %>%
+  dplyr::select(x,y,contains("cc_med_20")) %>%
+  drop_na() %>%
+  as.matrix()
+
+rowlm <- function(x.row){
+  model <- lm(x.row[3:17] ~ c(1:15))
+  model_summary <- summary(model)
+  estimate <- model$coefficients[2]
+  p_value <- model_summary$coefficients[8]
+  return(c(x.row[1],x.row[2],# x y cols
+           estimate, p_value))
+}
+
+lmresults_cc_kok <- apply(cc_xy, 1, rowlm)
+lmresults_cc_kok <- t(lmresults_cc_kok)
+# check that works
+# f_lmkok <- function(i) {
+#   lm(cc_xy[i,3:17]) ~  c(1:15)) %>%
+#     broom::tidy() %>%
+#     dplyr::select(term, estimate, p.value,)
+# }
+# f_lmkok(1)
+
+library(raster); library(terra)
+lm_rast <- rasterFromXYZ(lmresults_cc_kok, crs = epsg4326) %>% rast()
+names(lm_rast) <- c("estimate", "p.value")
+# write raster
+terraOptions(tempdir= here("Temp_R"))
+rasterOptions(tmpdir= here("Temp_R"))
+
+
+
+terra::writeRaster(lm_rast, here("Data", "Output", "lm_rast_5arcmin.tif"),
+                   wopt = wopt_options)
+```
+
+
+

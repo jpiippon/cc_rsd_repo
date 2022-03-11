@@ -1,0 +1,703 @@
+---
+title: "Supplementary figures"
+author: "Johannes"
+date: "01-01-2022"
+output: html_document
+---
+
+# Introduction
+Here we create figures for the Appendix.
+However, country specific maps produced in the file
+extract_countries.Rmd
+
+
+```{r include = FALSE}
+library(tidyverse); library(raster); library(gdalUtils); library(scico); library(tmap); library(tmaptools); library(sf); library(terra); library(here)
+library(data.table); library(broom); library(Rfast); library(matrixStats)
+timestep <- 2001:2015
+epsg4326 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+e <- extent(-180,180,-90,90)
+```
+
+
+# Treecover and Net Primary Productivity (NPP) everywhere
+
+Gether files downloaded from Google Earth Engine and combine
+
+
+```{r}
+# treecover. Get files downloaded from Google Earth Engine (GEE)
+supplement_files_tc <- list.files(path = here("Data", "Supplementary"),
+                           pattern="2000_2015_mean_tree_canopy_cover", full.names=TRUE) 
+# NPP. Also from GEE
+supplement_files_npp <- list.files(path = here("Data", "Supplementary"),
+                           pattern="2000_2015_mean_npp", full.names=TRUE) 
+
+# empty template raster we will fill soon --> note that we use raster package here
+writeRaster(raster(ext = e, crs = epsg4326),
+            filename = here("Data", "Supplementary",
+                            "mosaic_2000_2015_mean_tree_canopy_cover.tif"), ,
+            format="GTiff", overwrite=TRUE ) 
+
+# this fills the file created above
+mosaic_rasters(gdalfile = supplement_files_tc,
+                 dst_dataset = here("Data", "Supplementary", "mosaic_2000_2015_mean_tree_canopy_cover.tif"),
+                 of = "GTiff")
+
+# same for the NPP
+# empty template raster we will fill soon --> note that we use raster package here
+writeRaster(raster(ext = e, crs = epsg4326),
+            filename = here("Data", "Supplementary",
+                            "mosaic_2000_2015_mean_npp.tif"), ,
+            format="GTiff", overwrite=TRUE ) 
+
+# this fills the file created above
+mosaic_rasters(gdalfile = supplement_files_npp,
+                 dst_dataset = here("Data", "Supplementary", "mosaic_2000_2015_mean_npp.tif"),
+                 of = "GTiff")
+
+
+
+#### get the merged files 
+supplement_tc <- here("Data", "Supplementary", "mosaic_2000_2015_mean_tree_canopy_cover.tif") %>% 
+  rast()
+
+supplement_npp <- here("Data", "Supplementary",
+                       "mosaic_2000_2015_mean_npp.tif") %>% 
+  rast()
+
+
+
+## aggregate and resample to 5as resolution. Use cattle GLW raster as template
+template_cattle <- here("Data", "Input", "5_Ct_2010_Da.tif") %>% 
+  rast()
+
+supplement_tc_agg <- supplement_tc %>% 
+  aggregate(., fact = 18, na.rm = TRUE) 
+
+
+supplement_tc_5arcmin <- supplement_tc_agg %>% 
+  resample(., template_cattle,
+           filename = here("Data", "Supplementary", "supplementary_treecover_5arcmin.tif"))
+
+supplement_tc_5arcmin %>% plot()
+  
+# same for npp
+supplement_npp_agg <- supplement_npp %>% 
+  aggregate(., fact = 18, na.rm = TRUE) 
+
+
+supplement_npp_5arcmin <- supplement_npp_agg %>% 
+  resample(., template_cattle,
+           filename = here("Data", "Supplementary",
+                           "supplementary_npp_5arcmin.tif"))
+
+supplement_npp_5arcmin %>% plot()
+
+#### get the files 
+supplement_npp_5arcmin <- here("Data", "Supplementary",
+                           "supplementary_npp_5arcmin.tif") %>% 
+  rast()
+
+supplement_tc_5arcmin <-here("Data", "Supplementary", "supplementary_treecover_5arcmin.tif") %>% 
+  rast()
+
+```
+
+
+# Fraction of grassland in larger (5 arc-minutes) cells
+
+```{r}
+# get the data created in the file Figures.Rmd 
+mcd_01_5arcmin <- 
+  here("Data", "Output", "mcd_fraction_of_grassland_in_cell_5arcmin.tif") %>% 
+  rast()
+plot(mcd_01_5arcmin)
+
+```
+
+
+
+# A function for plotting and regions 
+Similar function than in the file
+Figures.Rmd
+
+```{r}
+# Draw a map index 
+# @param r_index: a raster to be plotted
+# @param index_label: label that will be placed as the legend title
+# @param colorpal: color palette to be used, ordered from low to high value
+# @param breakvals: break values to be drawn in legend
+# @param color_midpoint: TRUE if the color scale has a midpoint, NULL by default (no midpoint in color scale)
+# @param tocrs: proj4 string of CRS to which the raster is projected if given (by default, no projection is done)
+# @return tmap object of the index given
+create_index_map <- function(r_index, index_label,index_main_title,
+                             colorpal, breakvals,
+                             breaknames = NULL,
+                             color_midpoint = NULL, tocrs = NA){
+
+  # project to another crs
+  if (!is.na(tocrs)){
+    r_index <- project(r_index, tocrs, mask = TRUE)
+  }
+
+  # create tmap object
+  index_map <- tm_shape(r_index,
+                        raster.downsample = TRUE) + 
+    tm_raster(#style = "cont", # draw gradient instead of classified
+              palette = colorpal,
+              breaks = breakvals,
+              labels = breaknames,
+              title = index_label,
+              midpoint = color_midpoint,
+              legend.reverse = TRUE) +
+    tm_layout(main.title = index_main_title,
+              main.title.position = "left",
+              main.title.size = 1,
+              legend.bg.color = TRUE,
+              legend.outside = TRUE,
+              frame = FALSE)+
+    tm_shape(reg_wgs84) +
+    tm_borders(col = "grey30", lwd = 0.5) 
+  
+  return (index_map)
+  
+} #tmaptools::palette_explorer()
+
+
+
+reg <- here("Data", "Input", "reg_mollw.gpkg") %>%  st_read()
+reg_wgs84 <- st_transform(reg,4326) 
+
+reg_wgs84 <- reg_wgs84 %>% 
+   mutate(subregion = c("Australia and Oceania", "Central America",
+                          "East Asia", "Eastern Europe and Central Asia",
+                          "Ice", "South Asia", "South America", "Middle East",
+                          "Sub-Saharan Africa", "North Africa", "North America",
+                          "Southeast Asia", "Western Europe")) %>% 
+  filter(subregion != "Ice")  # remove Ice
+
+# change to terra based vect
+reg_wgs84_vect <- vect(as(reg_wgs84, "Spatial")) # 
+```
+
+# Figure S2, S3 and S6a
+
+
+- NPP, gC/m2/yr
+- Treecover, percent
+- fraction of grassland in larger 5armin cells (plt_fraction_of_grassland)
+
+
+Originally NPP is kg*C/m2 and the scaling factor is 0.0001. Therefore we divide it by 10 to it in the correct unit of gC/m2/yr
+
+```{r}
+# NPP 5arcmin, TC 5arcmin
+#change to rob
+supplement_npp_5arcmin_rob <- project(supplement_npp_5arcmin, "+proj=robin",
+                                      mask = TRUE)
+
+supplement_tc_5arcmin_rob <- project(supplement_tc_5arcmin, "+proj=robin",
+                                      mask = TRUE)
+
+pal_npp <- scico(n = 5,begin = 0.6, end = 1, palette = "corkO")
+pal_tc <-  scico(n = 6, palette = "bamako", direction = -1)
+
+(plt_npp_mean <- 
+  create_index_map(r_index = supplement_npp_5arcmin_rob/10,
+                   index_main_title = "Average NPP during the period 2001-2015",
+                   index_label = "NPP, gC/m2/yr",
+                   colorpal = pal_npp,
+                   breakvals =  c(-Inf,100,200,500,1000, Inf),
+                   breaknames = c("< 100", "100-200", "200-500","500-1000","> 1000")) )
+
+(plt_tc_mean <- 
+  create_index_map(r_index = supplement_tc_5arcmin_rob,
+                   index_main_title = "Average tree canopy cover during the period 2001-2015",
+                   index_label = "Tree canopy cover, %",
+                   colorpal = pal_tc,
+                   breakvals =  c(-Inf,5,10,20,30,60,Inf),
+                   breaknames = c("< 5", "5-10","10-20","20-30", "30-60", "> 60")) )
+
+
+# save
+tmap_save(plt_npp_mean, here("Figures", "Supplementary", "Figure_S2_average_npp_2001-2015.pdf"),
+          width = 180, height = 150, units = "mm")
+
+tmap_save(plt_tc_mean, here("Figures", "Supplementary",
+                            "Figure_S3_average_tc_2001-2015.pdf"),
+          width = 180, height = 150, units = "mm")
+
+
+
+
+# fraction of grassland in 5arcmin cells
+pal_min_to_med <-  scico(n = 3, palette = "hawaii", begin = 0.1, end = 0.8)
+
+supplement_mcd_01_5arcmin_rob <- project(mcd_01_5arcmin*100, "+proj=robin",
+                                      mask = TRUE)
+ ## remove NA for plotting
+supplement_mcd_01_5arcmin_rob[supplement_mcd_01_5arcmin_rob == 0] <- NA
+
+ ## plot
+(plt_fraction_of_grassland <- 
+    create_index_map(r_index = supplement_mcd_01_5arcmin_rob,
+                   index_main_title = "Share of grassland in aggregated 5 arc-minutes cells",
+                   index_label = "[%]",
+                   colorpal = pal_min_to_med,
+                   breakvals =  c(0,10,20,40,60,80, 100),
+                   breaknames = c("0-10", "10-20","20-40","40-60","60-80", "80-100")) )
+
+
+tmap_save(plt_fraction_of_grassland,
+          here("Figures", "Supplementary", "Figure_S6a_share_of_grassland_in_5arcmin_cell.pdf"),
+          width = 180, height = 150, units = "mm")
+```
+
+# Figure S4. Animal densities and RSD derived using DA and Aw methods of GLW
+
+In the main text, we calculated everything using dasymetric (DA) method of Gridded Livestock of the World (GLW). See the documentation in their website. However, for a comparison, we also created a GLW map and RSD map using areal-weighted (Aw) method of GLW. For these Aw method, we ran the same simulation.Rmd script but used Aw animals as input
+
+Note that Figure S4c is the same as the RSD figure presented in the main text (Figure S4a)
+
+```{r}
+pal_glw <- scico(n = 6, palette = "lajolla", direction = 1)
+# Dasymmetric method (Da) -- this is used everywhere in the main text
+ ## Figure S4c is the same as RSD figure presented in the main text
+sim_df <- here("Data", "Output", "simulation_results_n1000.csv") %>% # 
+  fread()
+names(sim_df)
+
+
+au_per_km2_da <- sim_df %>% 
+  dplyr::select(x,y,au_pkm2_med_2010)  %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast()
+
+hist(au_per_km2_da, xlim = c(0,100), breaks = 100)
+
+
+
+# change to rob for plotting
+au_per_km2_da_rob <- project(au_per_km2_da, "+proj=robin", mask = TRUE)
+
+
+
+(plt_glw_simulated_da <- 
+  create_index_map(r_index = au_per_km2_da_rob,
+                   index_main_title = "Gridded Livestock of the World (GLW) modelled livestock distribution based on simulated animal aunit (AU) conversion factors [AU/km2]. Animal distribution based on dasymetric (DA) method",
+                   index_label = "AU/km2",
+                   colorpal = pal_glw,
+                   breakvals = c(0,1,10,20,50,100,Inf),
+                   breaknames = c("< 1",
+                                  "1-10",
+                                  "10-20",
+                                  "20-50",
+                                  "50-100",
+                                  "> 100")))
+
+
+tmap_save(plt_glw_simulated_da, here("Figures", "Supplementary",
+                            "Figure_S4a_glw_simulated_au_per_km2.pdf"),
+          width = 180, height = 150, units = "mm")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# areal weighted (Aw) animals
+sim_aw_animals <- here("Data","Supplementary", "simulation_results_global_n1000_aw_animals.csv") %>% 
+  fread()
+names(sim_aw_animals)
+
+au_per_km2_aw <- sim_aw_animals %>% 
+  dplyr::select(x,y,au_pkm2_med_2010)  %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast()
+
+# change to rob for plotting
+au_per_km2_aw_rob <- project(au_per_km2_aw, "+proj=robin", mask = TRUE)
+
+
+#plot GLW aw
+
+(plt_glw_simulated_aw <- 
+  create_index_map(r_index = au_per_km2_aw_rob,
+                   index_main_title = "Gridded Livestock of the World (GLW) modelled livestock distribution based on simulated animal aunit (AU) conversion factors [AU/km2]. Animal distribution based on areal_weighted (Aw) method",
+                   index_label = "AU/km2",
+                   colorpal = pal_glw,
+                   breakvals = c(0,1,10,20,50,100,Inf),
+                   breaknames = c("< 1",
+                                  "1-10",
+                                  "10-20",
+                                  "20-50",
+                                  "50-100",
+                                  "> 100")))
+
+
+tmap_save(plt_glw_simulated_aw, here("Figures", "Supplementary",
+                            "Figure_S4b_glw_simulated_au_per_km2_aw.pdf"),
+          width = 180, height = 150, units = "mm")
+
+
+
+
+
+# RSD using aw animals as input
+rsd_med_vars_aw <- sim_aw_animals %>%  
+  dplyr::select(rsd_med_2008,rsd_med_2009,rsd_med_2010,rsd_med_2011,rsd_med_2012) 
+
+
+rsd_5y_med_aw <- rsd_med_vars_aw %>% 
+  mutate(rsd_med_median_aw = rowMedians(as.matrix(rsd_med_vars_aw),na.rm = TRUE)) %>% 
+  bind_cols(sim_aw_animals %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, rsd_med_median_aw) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+
+
+
+# proj
+rsd_5y_med_aw_rob <- project(rsd_5y_med_aw, "+proj=robin", mask = TRUE)
+
+# plot glw
+pal_rsd <- scico(n = 3, palette = "lajolla")
+
+# rsd calculated based on simualated median of cc2008-cc2012
+(plt_rsd_med5_aw <- 
+  create_index_map(r_index = rsd_5y_med_aw_rob,
+                   index_main_title = "Relative stocking density (RSD) based on median carrying capacity (CC) over 2008-2012 [%]. Animal distribution based on areal_weighted (Aw) method",
+                   index_label = "RSD in %",
+                   colorpal = pal_rsd,
+                   breakvals = c(-Inf, 0.2, 0.65, Inf),
+                   breaknames = c("<20%, low pressure (% of total area)",
+                                  "20-65%, medium pressure (% of total area)",
+                                  ">65%, overstocked (% of total area)")))
+
+
+
+tmap_save(plt_rsd_med5_aw, here("Figures", "Supplementary",
+                            "Figure_S4d_rsd_5y_med_simulated_aw.pdf"),
+          width = 180, height = 150, units = "mm")
+
+
+
+# calculate total animal numbers in our study area (Aw animals)
+au_per_pixel_aw <- 
+  au_per_km2_aw * cellSize(au_per_km2_aw, unit = "km")
+
+#global(au_per_pixel_aw, fun = "sum", na.rm = TRUE ) / 1e6 # 1478	 million AU (Aw method) 
+```
+
+
+
+# Figure S7
+
+Compare CC_trend to CC_med
+--> how many % of potential animal units (AU) has been lost during 2001-2015?
+--> must be cropped first as NA rows were dropped for cc_trend calculations
+
+
+
+```{r}
+cc_trend # from figures.Rmd
+cc_5y_med # from figures.Rmd
+ext(cc_5y_med); ext(cc_trend)
+cc_5y_med_trendcrop <- crop(cc_5y_med, cc_trend)
+comparison_percent <- 100 * (cc_trend$estimate*15) / cc_5y_med_trendcrop
+# reproject
+comparison_percent_rob <- project(comparison_percent, 
+                                  "+proj=robin", mask = TRUE)
+         
+
+pal_trend2 <- scico(n = 7, palette = "roma")
+
+(plt_comp_cctrend_cc_med <-
+  create_index_map(r_index = comparison_percent_rob,
+                   index_main_title = "Ratio of CC trend estimate (multiplied by the number of study years, 15) compared to median CC over 2008-2012 [%]",
+                  index_label = "%",
+                  colorpal = pal_trend2,
+                  breakvals = c(-Inf, -50, -25,-10,10,25,50, Inf),
+                   breaknames = c("< -50",
+                                  "-50, -25",
+                                  "-25, -10",
+                                  "-10, 10",
+                                  "10, 25",
+                                  "25,50",
+                                   "> 50"),
+                   color_midpoint = 0))
+
+
+tmap_save(plt_comp_cctrend_cc_med, here("Figures", "Supplementary",
+                                        "Figure_S7_ratio_of_cc_trend_to_ccmed.pdf"),
+          width = 180, height = 150, units = "mm")
+```
+
+# sensitivity plots
+
+```{r}
+sense <- here("Data", "Output", "sensitivity_results_2010_n1000_260122.csv") %>% 
+  fread()
+
+sense_rob <- rasterFromXYZ(sense, crs = epsg4326) %>% 
+  rast() %>% 
+  project(., "+proj=robin", mask = TRUE)
+
+names(sense_rob) <- c("NPP", "NPP_temperature",
+                      "NPP_temperature_treecover", "NPP_temperature_treecover_animal_units")
+
+
+pal_cv <-  scico(n = 6, palette = "nuuk", direction = -1)
+
+# CV sensitivity
+(plt_sensitivity2010<-
+  create_index_map(r_index = 100*sense_rob ,
+                   index_main_title = "Model sensitivity to different input parameters in 2010 measured with coefficient of variation (CV)",
+                   index_label = "CV in %",
+                   colorpal = pal_cv,
+                   breakvals = c(-Inf,10,15,20,30,40,Inf) ))
+
+
+tmap_save(plt_sensitivity2010, here("Figures", "Supplementary", "Figure_S8_sensitivity.pdf"),
+          width = 180, height = 150, units = "mm")
+```
+
+
+
+
+
+
+# Figure S9 - ISIMIP derived aboveground biomass (AGB)
+
+ISIMIP data gathered in the file
+gather_isimip_data.Rmd
+and simulated in the file
+simulate_isimip_agb.Rmd
+
+We'll calculate AGB for 5 year median (years 2006-2010) to make comparison with MODIS NPP derived AGB easier
+(those are the compatible years)
+
+```{r}
+sim_isimip <- here("Data", "Supplementary", "isimip_agb_1000sim.csv") %>% 
+  fread()
+names(sim_isimip) # med and cv for every year 2000-2010
+
+
+# AGB ISIMIP
+ab_med_vars_isimip_2006_2010 <- sim_isimip %>%  
+  dplyr::select(agb_med_2006,agb_med_2007,agb_med_2008, agb_med_2009,agb_med_2010) 
+
+agb_med_isimip_2006_2010 <- ab_med_vars_isimip_2006_2010 %>% 
+  mutate(agb_med_median_isimip = 
+           rowMedians(as.matrix(ab_med_vars_isimip_2006_2010),na.rm = TRUE)) %>% 
+  bind_cols(sim_isimip %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, agb_med_median_isimip) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+
+
+# Interannual variability for AGB. Compatible years 2001-2010
+agb_iv_isimip_2001_2010 <- sim_isimip %>%
+  dplyr::select(contains("agb_med")) %>%
+  mutate(iv_agb_isimip = 100* as.matrix(.) %>% rowcvs()) %>%
+  bind_cols(sim_isimip %>% dplyr::select(x,y)) %>%  # get the coordinates
+  dplyr::select(x,y, iv_agb_isimip) %>%
+  rasterFromXYZ(., crs = epsg4326) %>%
+  rast()
+
+
+# CV AGB
+agb_cv_vars_isimip_2006_2010 <- sim_isimip %>%  
+  dplyr::select(agb_cv_2006,agb_cv_2007,agb_cv_2008, agb_cv_2009,agb_cv_2010) 
+
+agb_cv_isimip_2006_2010 <- agb_cv_vars_isimip_2006_2010 %>% 
+  mutate(agb_cv_median =
+           rowMedians(as.matrix(agb_cv_vars_isimip_2006_2010),na.rm = TRUE)) %>% 
+  bind_cols(sim_isimip %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, agb_cv_median) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+
+
+# project
+agb_med_isimip_2006_2010_rob <- 
+  project(agb_med_isimip_2006_2010, "+proj=robin", mask = TRUE)
+
+agb_iv_isimip_2001_2010_rob <- 
+  project(agb_iv_isimip_2001_2010, "+proj=robin", mask = TRUE)
+
+agb_cv_isimip_2006_2010_rob <- 100*
+  project(agb_cv_isimip_2006_2010, "+proj=robin", mask = TRUE)
+
+
+# plot
+pal_cc <- scico(n = 6, palette = "bamako", direction = -1)
+pal_cv <-  scico(n = 6, palette = "nuuk", direction = -1)
+
+
+
+
+## AGB ISIMIP
+(plt_agb_med_isimip_2006_2010 <- 
+  create_index_map(r_index = agb_med_isimip_2006_2010_rob/1e3, # divide to get correct unit, was kg biomass per km2 and we convert to gram per m2
+                   index_main_title = "ISIMIP-based median aboveground biomass (AGB) over 2006-2010",
+                   index_label = "AGB g/m2/yr",
+                   colorpal = pal_cc, #pal_ab,
+                   breakvals =  c(-Inf,25,50,100,200,400, Inf),
+                   breaknames = c(
+                     "< 25 (% of total area)",
+                     "25-50 (%)",
+                     "50-100 (%)",
+                     "100-200 (%)",
+                     "200-400 (%)",
+                     "> 400 (%)")) ) # areas_for_fig_classes.Rmd
+# Total areas
+ # ISIMPI AGB > MODIS AGB when AGB over 200 g m2 yr
+ # ISIMPI AGB slightly smaller than MODIS AGB when AGB 25 -100 g m2 yr
+ # ! modelled NPP data larger/potentially overestimated in areas with highest NPP values as stated by Irisarri
+
+
+
+## IV ISIMIP
+(plt_agb_iv_isimip <- 
+  create_index_map(r_index = agb_iv_isimip_2001_2010_rob ,
+                   index_main_title = "Interannual variability in ISIMIP-based AGB over 2001-2010 [%]",
+                   index_label = "IV in %",
+                   colorpal = pal_cv,
+                   breakvals = c(0,5,10,20,30,40,Inf),
+                   breaknames = c("< 5 (% of total area)",
+                                  "5-10 (%)",
+                                  "10-20 (%)",
+                                  "20-30 (%)",
+                                  "30-40 (%)",
+                                  "> 40 (%)"))) #areas_for_fig_classes.Rmd: 
+# Total areas --> different time period
+ # ISIMIP has generally smaller variabilities. However, time period is much shorter
+
+
+
+## CV AGB ISIMIP
+(plt_agb_cv_isimip_2006_2010 <-
+  create_index_map(r_index = agb_cv_isimip_2006_2010_rob ,
+                   index_main_title = "Uncertainty related to ISIMIP-based aboveground biomass (AGB) measured with coefficient of variation (CV)",
+                   index_label = "CV in %",
+                   colorpal = pal_cv,
+                   breakvals = c(15,20,25,30,35,40,Inf),
+                   breaknames = c("15-20 (% of total area)",
+                                  "20-25 (%)",
+                                  "25-30 (%)",
+                                  "30-35 (%)",
+                                  "35-40 (%)",
+                                  "> 40 (%)") )) #areas_for_fig_classes.Rmd
+# Total area
+ # CV ISIMIP AGB > CV MODIS AGB. Makes sense as we assumed MODIS NPP varies 7%. Moreover, ISIMIP NPP models include climate forcings --> more uncertain?
+
+```
+
+
+# Compare ISIMIP and MODIS derived AGB maps
+
+```{r}
+# MODIS over 2006-2010 (compatible years with ISIMIP)
+agb_med_vars_2006_2010 <- sim_df %>%  # this data from figures.Rmd
+  dplyr::select(ab_med_2006,ab_med_2007,ab_med_2008, ab_med_2009,ab_med_2010) 
+
+agb_med_MODIS_2006_2010 <- agb_med_vars_2006_2010 %>% 
+  mutate(agb_med_median_MODIS =
+           rowMedians(as.matrix(agb_med_vars_2006_2010),na.rm = TRUE)) %>% 
+  bind_cols(sim_df %>% dplyr::select(x,y)) %>%  
+  dplyr::select(x,y, agb_med_median_MODIS) %>% 
+  rasterFromXYZ(., crs = epsg4326) %>% 
+  rast() 
+
+
+# Divide MODIS / ISIMIP
+agb_div <- agb_med_MODIS_2006_2010 / agb_med_isimip_2006_2010
+agb_div_rob <-  100*project(agb_div, "+proj=robin", mask = TRUE)
+
+agb_div %>% hist()
+summary(agb_div)
+
+
+# plot
+pal_trend <- scico(n = 6, palette = "roma")
+
+(plt_division_modis_isimip <-
+  create_index_map(r_index = agb_div_rob, 
+                   index_main_title = "MODIS derived AGB / ISIMIP derived AGB",
+                  index_label = "-",
+                   colorpal = pal_trend,
+                   breakvals = c(0,50,75,100,125,150,Inf),
+                   breaknames = c("0-50% (of total area)",
+                                  "50-75% (%)",
+                                  "75-100% (%)",
+                                  "100-125% (%)",
+                                  "125-150% (%)",
+                                  "> 150% (%)"),
+                   color_midpoint = 0)) #areas_for_fig_classes.Rmd
+
+
+## arrange plots
+plt_isimip <- tmap_arrange(
+  plt_agb_med_isimip_2006_2010,
+  plt_agb_iv_isimip,
+  plt_agb_cv_isimip_2006_2010,
+  plt_division_modis_isimip,
+  ncol = 2)
+
+plt_isimip
+
+tmap_save(plt_isimip, here("Figures", "Supplementary", "Figure_S9_isimip_vs_modis.pdf"),
+          width = 180, height = 150, units = "mm")
+```
+
+# Some plots for Figure 1 (flowchart)
+
+```{r}
+# plot original slope
+slope <- here("Data", "Input", "dtm_slope_merit.dem_m_250m_s0..0cm_2018_v1.0.tif") %>%
+  rast()
+
+# aggregate and change to percents. Slopes originally degree * 100 but we need slope% instead 
+slope_agg_fact40_percent <- aggregate(slope, fact = 40, na.rm = TRUE) %>% 
+  app(., function (x) {100 * tan((x/100)*pi/180  )})
+
+
+
+slope_rob <- project(slope_agg_fact40_percent , "+proj=robin", mask = TRUE) 
+plot(slope_rob)
+
+pal_slope <- scico(n = 4, palette = "bilbao", begin = 0.1, end = 0.8)
+
+
+
+(plt_slope <- 
+  create_index_map(r_index = slope_rob, 
+                   index_main_title = "Terrain slope",
+                   index_label = "%",
+                   breakvals =  c(0,10, 30,60,Inf),
+                   breaknames = c("0-10", "10-30", "30-60", ">60"),
+                   colorpal = pal_slope))
+
+tm_shape(slope_rob) +
+  tm_raster(palette = pal_slope,
+            breaks = c(0,10, 30,60,Inf),
+            labels = c("0-10", "10-30", "30-60", ">60"))
+  
+  
+  
+
+# 
+tmap_save(plt_slope, filename = here("Figures", "Supplementary", "slopes_percent_agg40.pdf"),
+          width = 180, height = 150, units = "mm")
+```

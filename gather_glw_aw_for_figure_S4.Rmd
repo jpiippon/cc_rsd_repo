@@ -1,0 +1,67 @@
+---
+title: "GLW Aw"
+author: "Johannes Piipponen"
+date: "10 12 2021"
+output: html_document
+---
+
+# Areal weighted animals --> only for Appendix
+We'll calculate simulated animal distribution and RSD maps using areal weighted product. Previously we did this with dasymmetric method, but for comparison, this must be done with areal weighted animal product as well.
+
+Packages as well as some data sets from the file
+rast_processing_res000449.Rmd
+
+
+
+```{r}
+animals_aw <- c(here("Data", "Supplementary", "6_Ct_2010_Aw.tif") %>% rast(), #cattle
+             here("Data", "Supplementary", "6_Sh_2010_Aw.tif") %>% rast(), #sheep
+             here("Data", "Supplementary", "6_Bf_2010_Aw.tif") %>% rast(), #buffalo
+             here("Data", "Supplementary", "6_Ho_2010_Aw.tif") %>% rast(), #horse
+             here("Data", "Supplementary", "6_Gt_2010_Aw.tif") %>% rast(), #goat
+             here("Data", "Input", "8_Areakm.tif") %>% rast()) # area of each pixel
+
+names(animals_aw) <- c("cattle", "sheep", "buffalo", "horse", "goat", "pix_area_km2")
+
+
+animals_aw
+
+
+
+
+# data_all_but_animals_5arcmin from rast_processing.Rmd
+data_all_but_animals_5arcmin <-
+  here("Data", "Processed_input", "data_all_but_animals_5arcmin.tif") %>% 
+  rast()
+
+
+# crop
+animals_aw_crop <- crop(animals_aw, data_all_but_animals_5arcmin)
+
+
+# add animals to the same raster
+data_all_5arcmin_aw_animals <- c(data_all_but_animals_5arcmin, animals_aw_crop)
+
+
+# mask everything with the npp
+tic()
+data_for_simulations_aw_animals <- 
+  mask(data_all_5arcmin_aw_animals, 
+       data_all_5arcmin_aw_animals$npp2015,
+       wopt = wopt_options)
+toc()
+
+
+
+# convert to vector and save 
+data_for_simulations_df_aw_animals <- 
+  data_for_simulations_aw_animals %>% 
+  as.data.frame(., xy=TRUE) %>% 
+  as.data.table() %>% 
+  fwrite(., here("Data", "Supplementary", "data_for_simulations_aw_animals.csv"))
+
+
+
+# writeRaster(animals_aw_cropmask, here("Delete", "animals_areal_weighted.tif"))
+```
+

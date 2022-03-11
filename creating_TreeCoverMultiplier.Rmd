@@ -1,0 +1,125 @@
+---
+title: "Creating TreeCoverMultiplier function"
+author: "Johannes"
+date: "01-01-2022"
+output: html_document
+---
+
+# Introduction
+See Appendix S2.4
+
+```{r include = FALSE}
+library(tidyverse)
+library(here)
+library(broom)
+
+N <- 1000
+```
+
+# Read digitized datapoints 
+
+We digitalized the data points found in the studies of Le Brocque et al. (2008, p.11) and Lloyd et al. (2008, p.8) with help of WebPlotDigitizer software. Then we fitted a nonlinear curve to the points (Figure S1) and performed 1000 bootstraps to derive a confidence interval (CI) of 95% for 1000 generated curves.
+
+See Appendix S2.4
+
+```{r}
+# data points
+dat <- tibble(
+  x = c(
+0.04417633, 0.04355762, 0.04331013, 0.08432217, 0.04279748, 0.04633300,
+0.13528671, 0.16898022, 0.19922660, 0.23265496, 0.25494641, 0.31398961,
+0.75080323, 0.66142526, 0.68051707, 0.60273561, 0.46546901, 0.42129267,
+0.46262291, 0.26922992, 0.20576732, 0.26518175, 0.26131035, 0.32799028,
+0.57621920, 0.57202961, 0.56453431, 0.55345045, 0.51638051, 0.52414098,
+0.48680588, 0.44618274, 0.43458623, 0.42723235, 0.37154790, 0.40888300,
+0.40159982, 0.37930836, 0.33850845, 0.36456524, 0.34980444, 0.37586123,
+0.36483041, 0.39820572, 0.41301956, 0.04324324, 0.03843844, 0.03363363,
+0.03363363, 0.03363363, 0.07687688, 0.10570571, 0.17777778, 0.19219219,
+0.25465465, 0.30270270, 0.32192192, 0.36996997, 0.41321321, 0.42762763,
+0.44684685, 0.31711712, 0.31231231, 0.36996997, 0.36036036, 0.34594595,
+0.50930931, 0.55735736, 0.57657658, 0.56216216, 0.65825826, 0.74954955,
+0.67267267, 0.60060060, 0.57657658, 0.52372372, 0.48528529, 0.46126126,
+0.46606607, 0.41321321, 0.39879880, 0.40840841, 0.36516517, 0.35075075,
+0.41801802, 0.27387387, 0.26426426, 0.24504505, 0.30270270, 0.23063063,
+0.00764526, 0.01070336, 0.02140673, 0.03058104, 0.04128440, 0.02140673,
+0.04892966, 0.08103976, 0.11162080, 0.20030581, 0.22018349, 0.26911315,
+0.36238532, 0.35168196, 0.33944954, 0.37003058, 0.39143731, 0.42966361,
+0.44954128),
+  y = c(
+0.90476190, 0.73809524, 0.67142857, 0.71904762, 0.53333333, 0.48571429,
+0.44761905, 0.52380952, 0.67142857, 0.67619048, 0.68095238, 0.58571429,
+0.25238095, 0.17619048, 0.31904762, 0.36666667, 0.39047619, 0.49047619,
+0.62380952, 0.52857143, 0.43333333, 0.43809524, 0.39523810, 0.35714286,
+0.22380952, 0.09523810, 0.07619048, 0.09047619, 0.10476190, 0.19523810,
+0.13809524, 0.19523810, 0.07142857, 0.09047619, 0.09047619, 0.14761905,
+0.18571429, 0.18095238, 0.19047619, 0.20952381, 0.23333333, 0.25238095,
+0.28095238, 0.27142857, 0.26190476, 0.29906832, 0.17608696, 0.15745342,
+0.11086957, 0.09223602, 0.11086957, 0.04378882, 0.04378882, 0.06428571,
+0.06428571, 0.04192547, 0.03633540, 0.03260870, 0.02701863, 0.02515528,
+0.02515528, 0.05310559, 0.06428571, 0.05310559, 0.06428571, 0.06242236,
+0.04378882, 0.03447205, 0.03447205, 0.02515528, 0.03260870, 0.06242236,
+0.11273292, 0.09223602, 0.08291925, 0.06987578, 0.06242236, 0.07173913,
+0.08105590, 0.09037267, 0.08850932, 0.09409938, 0.09037267, 0.09037267,
+0.11273292, 0.10900621, 0.10900621, 0.11086957, 0.15745342, 0.25248447,
+1.00339559, 0.98641766, 0.96264856, 0.95246180, 1.00000000, 0.91171477,
+0.85398981, 0.77249576, 0.77249576, 0.59592530, 0.59592530, 0.62648557,
+0.59592530, 0.68081494, 0.68081494, 0.74193548, 0.39898132, 0.39219015,
+0.22241087))
+```
+
+# Create curve (1000 bootstraps)
+
+```{r}
+kmod <- nls(y ~ exp(k*x), data = dat, start=list(k=-2))
+
+set.seed(123)
+boots <- sapply(1:N, function(x){
+  mod <- try(nls(y ~ exp(k*x), data = dat[sample(1:nrow(dat), size = nrow(dat), replace = TRUE),], start=list(k=-2)), TRUE)
+  if(class(mod)=="try-error") return(NA)
+  return(coef(mod))
+})
+
+#hist(boots) # k values
+mean(boots, na.rm = TRUE) # -4.521432 
+median(boots, na.rm = TRUE) #-4.455211
+
+sd(boots, na.rm = TRUE) # uncertainty of k OR standard error of k
+sd(boots)/mean(boots) #CV 
+
+
+quantile(boots, probs=c(0.025, 0.975), na.rm =TRUE) 
+```
+
+# Plot 
+
+```{r}
+p_boot <- tibble(k = boots,
+             x = list(seq(0,1, 0.1))) %>% 
+  mutate(fun_vals = map2(.x = k, .y = x, .f = function(tt,y) exp(tt*y))) %>% 
+  unnest(cols =c(x,fun_vals)) %>% 
+ggplot() +
+  geom_line(aes(x =x, y = fun_vals, group = k), alpha = 0.9, colour = "Blue")+
+  geom_point(data = dat, aes(x = x, y = y), size=2, shape = 1) + # add points
+   geom_function(fun = function(x) 
+    {exp(median(boots, na.rm = TRUE )*x)},
+                colour = "Black") + # add median curve
+  geom_function(fun = function(x) 
+    {exp(quantile(boots, probs=c(0.025), na.rm =TRUE)*x)},
+                colour = "Black") + # add 2.5% curve
+  geom_function(fun = function(x) 
+    {exp(quantile(boots, probs=c(0.975), na.rm =TRUE)*x)},
+                colour = "Black") +  # add 97.5% curve
+  scale_x_continuous(breaks = seq(0, 1, 0.10)) +
+  ylab("Biomass available for grazers %") +
+  xlab("Tree Canopy cover %")+
+  ggtitle("Consumable biomass in the understory")+
+  theme_minimal()
+
+p_boot
+
+ggsave(filename = here("Figures", "Supplementary", "Figure_S1_treecovermultiplier_curve.pdf"),
+       plot = p_boot) # further improved in adove illustrator
+
+
+```
+
