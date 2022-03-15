@@ -8,6 +8,10 @@ output: html_document
 # Introduction
 Simulate ISIMIP2a derived AGB. See Appendix S2.10
 
+Ref
+Reyer, C., Asrar, G., Betts, R., Chang, J., Chen, M., Ciais, P., Dury, M., François, L., Henrot, A.-J., Hickler, T., Ito, A., Jacquemin, I., Nishina, K., Mishurov, M., Morfopoulos, C., Munhoven, G., Ostberg, S., Pan, S., Rafique, R., … Büchner, M. (2019). ISIMIP2a Simulation Data from Biomes Sector (V. 1.1). https://doi.org/10.5880/PIK.2019.005
+
+
 ## Set up
 
 ```{r setup, echo = FALSE}

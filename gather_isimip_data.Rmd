@@ -8,6 +8,10 @@ output: html_document
 # Introduction
 In this file we gather ISIMIP2a modelled NPP data. See Appendix S2.10
 
+Ref:
+Reyer, C., Asrar, G., Betts, R., Chang, J., Chen, M., Ciais, P., Dury, M., François, L., Henrot, A.-J., Hickler, T., Ito, A., Jacquemin, I., Nishina, K., Mishurov, M., Morfopoulos, C., Munhoven, G., Ostberg, S., Pan, S., Rafique, R., … Büchner, M. (2019). ISIMIP2a Simulation Data from Biomes Sector (V. 1.1). https://doi.org/10.5880/PIK.2019.005
+
+
 ```{r include = FALSE}
 library(tidyverse); library(raster); library(gdalUtils); library(scico);
 library(sf); library(terra); library(data.table); library(here); library(tictoc)
