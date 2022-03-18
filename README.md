@@ -1,6 +1,7 @@
 # repo_cc_rsd
 Global trends in grassland carrying capacity and relative stocking density of livestock.
-Contains self-explanatory scripts needed to reproduce the analysis. 
+Contains self-explanatory scripts needed to reproduce the analysis. Data for the article can be found at Zenodo:
+
 
 Input data for MODIS land cover type (Sulla-Menashe & Friedl, 2018) and MODIS NPP (Running & Zhao, 2019), as well as for tree canopy cover (Sexton et al., 2013) downloaded via Google Earth Engine (GEE). See GEE_codes.txt for this input data. For downloading the data for temperature (Abatzoglou et al., 2018), terrain slopes (Amatulli et al., 2020), gridded livestock of the world (Gilbert et al., 2018) and global livestock production systems (Robinson et al., 2011), see references at the end of this document. This input data is processed in the file rast_processing_res000449.Rmd.
 
