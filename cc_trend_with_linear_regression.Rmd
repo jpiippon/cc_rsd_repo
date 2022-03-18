@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Introduction
-Calculate linear trend based on simulated CC data. See simulation.Rmd and figures.Rmd
+Calculate linear trend based on simulated CC data. See simulation.Rmd and figures.Rmd 
 
 
 

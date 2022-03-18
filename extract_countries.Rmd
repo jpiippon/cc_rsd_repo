@@ -37,7 +37,7 @@ adm_10m <- here("Data", "Input", "ne_10m_admin_0_countries.shp") %>%
 library(rmapshaper); library(broom) # other packages from Figures.Rmd
 # select only variables needed 
 adm_10m <- adm_10m %>% 
-  filter(!ADMIN %in% c("Antarctica", "Greenland")) %>% 
+  filter(!ADMIN %in% c("Antarctica" )) %>%  #"Greenland"
   mutate(ID = 1:nrow(.)) %>% 
     dplyr::select(ID, SOVEREIGNT, ADMIN) # do not simplify before extracting
 
@@ -195,6 +195,7 @@ plt_adm_10m_df_table
 
 # Plot
  ## function for plotting polygons
+ Adapted from figures.Rmd. 
  
 ```{r}
 create_map_polygons <- function(r_index, r_colnames, index_label,index_main_title,
@@ -219,7 +220,7 @@ create_map_polygons <- function(r_index, r_colnames, index_label,index_main_titl
               frame = FALSE)+
     tm_borders(col = "grey30", lwd = 0.33) 
   
-  return (index_map)
+  return (index_map) # Thanks for the function Vili Virkki
 }
 
 ```
@@ -240,7 +241,8 @@ pal_share_of_max <-  scico(n = 6, palette = "hawaii", begin = 0, end = 1.0, dire
 pal_min_to_med <-  scico(n = 3, palette = "hawaii", begin = 0.1, end = 0.8)
 
 # simplify --> only for plotting
-adm_10m_simple <- ms_simplify(adm_10m) # this removes +50 rows from adm_10m
+adm_10m_rob <-  st_transform(adm_10m, crs = "ESRI:54030")
+adm_10m_simple <- ms_simplify(adm_10m_rob) # this removes +50 rows from adm_10m
 
 
 # RSD fractions and sums

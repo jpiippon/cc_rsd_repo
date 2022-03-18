@@ -3,7 +3,7 @@ Coding environment in https://code.earthengine.google.com, datasets from Earth E
 
 
 MCD
-Ref: 
+Ref:  
 Sulla-Menashe, D., & Friedl, M. A. (2018). User guide to collection 6 MODIS land cover (MCD12Q1 and MCD12C1) product. USGS: Reston, VA, USA, 1–18. https://doi.org/10.5067/MODIS/MCD12Q1.006
 ////////////////////////////////////////////////////// MCD (Land Cover Types)
 // years to process (from start year t0 to end year t1)

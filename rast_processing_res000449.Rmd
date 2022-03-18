@@ -11,7 +11,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Description of the document
+# Description of the document 
 
 This document contains the codes and modifies the data for the article "Global trends in grassland carrying capacity and relative stocking density of livestock". Some of the calculations will take many hours. The input data distributed should be saved to path Data/Input 
 

@@ -11,7 +11,7 @@ In this document we calculate figure classes. For example, Fig 2 "% of total are
 Moreover, Table S1 calculated at the end of this document
 
 # Calculate surface areas for different figure classes
-figures.rmd must be read in
+figures.rmd must be read in 
 
 ```{r}
 # function that help to calculate areas for figure classes

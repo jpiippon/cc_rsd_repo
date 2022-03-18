@@ -6,7 +6,7 @@ output: html_document
 ---
 
 # Introduction
-See Appendix S2.4
+See Appendix S2.4 
 
 ```{r include = FALSE}
 library(tidyverse)

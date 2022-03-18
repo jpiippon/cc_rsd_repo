@@ -6,7 +6,7 @@ output: html_document
 ---
 
 
-# Introduction
+# Introduction 
 We account for the uncertainties in this document. Moreover, we do some sensitivity analysis to see how different parameters contribute to the uncertainty.
 
 Related to the article "Global trends in grassland carrying capacity and relative stocking density of livestock"

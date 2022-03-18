@@ -308,29 +308,30 @@ qtm(cc_trend$estimate)
 
 
 ## Regions and extract
-For macroregion data, see: 
-
-Kummu, M., Ward, P. J., Moel, H. de, & Varis, O. (2010). Is physical water scarcity a new phenomenon? Global assessment of water shortage over the last two millennia. Environmental Research Letters, 5(3), 034006. https://doi.org/10.1088/1748-9326/5/3/034006
-
 
 ```{r}
 # region data
 reg <- here("Data", "Input", "reg_mollw.gpkg") %>%  st_read()
-reg_wgs84 <- st_transform(reg,4326) 
+reg_rob <- st_transform(reg, crs = "ESRI:54030")
 
-reg_wgs84 <- reg_wgs84 %>% 
-   mutate(subregion = c("Australia and Oceania", "Central America",
+reg_rob <- reg_rob %>% 
+     mutate(subregion = c("Australia and Oceania", "Central America",
                           "East Asia", "Eastern Europe and Central Asia",
                           "Ice", "South Asia", "South America", "Middle East",
                           "Sub-Saharan Africa", "North Africa", "North America",
-                          "Southeast Asia", "Western Europe")) %>% 
-  filter(subregion != "Ice")  # remove Ice
+                          "Southeast Asia", "Western Europe"))
 
-# simplify reg_wgs84 for plotting
-reg_wgs84_simple <- ms_simplify(reg_wgs84)
 
-# change to terra based vect
-reg_wgs84_vect <- vect(as(reg_wgs84, "Spatial")) # 
+reg_wgs84 <- st_transform(reg,4326)  %>% 
+  mutate(subregion = reg_rob$subregion) %>% 
+  filter(subregion != "Ice")
+
+
+# simplify only for plotting
+reg_rob_simple <- ms_simplify(reg_rob)
+
+# change to terra based vect for extracting
+reg_wgs84_vect <- vect(as(reg_wgs84, "Spatial")) 
 
 
 # extract CC to subregions - weighted average
@@ -356,7 +357,7 @@ cc_regional <-
 # divide cc cols by sum_of_weights
 cc_regional <- cc_regional %>% 
   mutate(across(everything()), . / mcd) %>% # name mcd here comes when extracting the denominator
-  mutate(subregion = reg_wgs84$subregion) %>% 
+  mutate(subregion = reg_wgs84_vect$subregion) %>% 
   dplyr::select(-ID,-mcd)
 
 ```
@@ -405,8 +406,9 @@ cc_trend_rob <- project(cc_trend$estimate*15 , "+proj=robin", mask = TRUE)
 
 # Function for tmap plotting
 
+
 ```{r}
-# Draw a map index 
+# Draw a map index. Based on the draft of Vili Virkki
 # @param r_index: a raster to be plotted
 # @param index_label: label that will be placed as the legend title
 # @param colorpal: color palette to be used, ordered from low to high value
@@ -439,7 +441,7 @@ create_index_map <- function(r_index, index_label,index_main_title,
               legend.bg.color = TRUE,
               legend.outside = TRUE,
               frame = FALSE)+
-    tm_shape(reg_wgs84_simple) +
+    tm_shape(reg_rob_simple) +
     tm_borders(col = "grey30", lwd = 0.33) 
   
   return (index_map)
@@ -551,7 +553,6 @@ plt_fig2 <- tmap_arrange(
   ncol = 2)
 
 plt_fig2
-
 tmap_save(plt_fig2, here("Figures", "Figure2.pdf"))
 ```
 
@@ -699,7 +700,7 @@ to separate livestock-only systems from mixed (or industrial) production systems
 The glp version used is Ruminant_prod_systemsv5
 
 ```{r}
-mypath <- "" # change
+mypath <- "" # change -- unfortunately we could not provide this file
 glp <- rast(paste0(mypath, "GLP/GLP/Ruminat_prod_systemsv5/ruminant_production_systems.tif"))
 
 plot(glp)

@@ -123,14 +123,6 @@ Similar function than in the file
 Figures.Rmd
 
 ```{r}
-# Draw a map index 
-# @param r_index: a raster to be plotted
-# @param index_label: label that will be placed as the legend title
-# @param colorpal: color palette to be used, ordered from low to high value
-# @param breakvals: break values to be drawn in legend
-# @param color_midpoint: TRUE if the color scale has a midpoint, NULL by default (no midpoint in color scale)
-# @param tocrs: proj4 string of CRS to which the raster is projected if given (by default, no projection is done)
-# @return tmap object of the index given
 create_index_map <- function(r_index, index_label,index_main_title,
                              colorpal, breakvals,
                              breaknames = NULL,
@@ -142,8 +134,7 @@ create_index_map <- function(r_index, index_label,index_main_title,
   }
 
   # create tmap object
-  index_map <- tm_shape(r_index,
-                        raster.downsample = TRUE) + 
+  index_map <- tm_shape(r_index) + # possible to add projection = "+proj=robin" (but slow)
     tm_raster(#style = "cont", # draw gradient instead of classified
               palette = colorpal,
               breaks = breakvals,
@@ -157,28 +148,29 @@ create_index_map <- function(r_index, index_label,index_main_title,
               legend.bg.color = TRUE,
               legend.outside = TRUE,
               frame = FALSE)+
-    tm_shape(reg_wgs84) +
-    tm_borders(col = "grey30", lwd = 0.5) 
+    tm_shape(reg_rob_simple) +
+    tm_borders(col = "grey30", lwd = 0.33) 
   
   return (index_map)
   
-} #tmaptools::palette_explorer()
+}
 
 
 
+# region data
 reg <- here("Data", "Input", "reg_mollw.gpkg") %>%  st_read()
-reg_wgs84 <- st_transform(reg,4326) 
+reg_rob <- st_transform(reg, crs = "ESRI:54030")
 
-reg_wgs84 <- reg_wgs84 %>% 
-   mutate(subregion = c("Australia and Oceania", "Central America",
+reg_rob <- reg_rob %>% 
+     mutate(subregion = c("Australia and Oceania", "Central America",
                           "East Asia", "Eastern Europe and Central Asia",
                           "Ice", "South Asia", "South America", "Middle East",
                           "Sub-Saharan Africa", "North Africa", "North America",
-                          "Southeast Asia", "Western Europe")) %>% 
-  filter(subregion != "Ice")  # remove Ice
+                          "Southeast Asia", "Western Europe"))
 
-# change to terra based vect
-reg_wgs84_vect <- vect(as(reg_wgs84, "Spatial")) # 
+# simplify only for plotting
+reg_rob_simple <- ms_simplify(reg_rob)
+
 ```
 
 # Figure S2, S3 and S6a
@@ -446,7 +438,7 @@ tmap_save(plt_comp_cctrend_cc_med, here("Figures", "Supplementary",
 # sensitivity plots
 
 ```{r}
-sense <- here("Data", "Output", "sensitivity_results_2010_n1000_260122.csv") %>% 
+sense <- here("Data", "Output", "sensitivity_results_2010_n1000.csv") %>% 
   fread()
 
 sense_rob <- rasterFromXYZ(sense, crs = epsg4326) %>% 

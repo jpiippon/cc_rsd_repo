@@ -9,7 +9,7 @@ output: html_document
 We'll calculate simulated animal distribution and RSD maps using areal weighted product. Previously we did this with dasymmetric method, but for comparison, this must be done with areal weighted animal product as well.
 
 Packages as well as some data sets from the file
-rast_processing_res000449.Rmd
+rast_processing_res000449.Rmd 
 
 
 
